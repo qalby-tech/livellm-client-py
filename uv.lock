@@ -81,7 +81,7 @@ wheels = [
 ]
 
 [[package]]
-name = "livellm-proxy-client"
+name = "livellm-client"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

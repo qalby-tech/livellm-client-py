@@ -19,6 +19,7 @@ def create_openai_provider_config(api_key: str, base_url: Optional[str] = None) 
         creds=Creds(api_key=api_key, provider="openai", base_url=base_url),
         models=[
             Model(name="gpt-5-mini", capabilities=[]),
+            Model(name="gpt-5-nano", capabilities=[]),
             Model(name="gpt-5", capabilities=[]),
             Model(name="gpt-4o", capabilities=[ModelCapability.IMAGE_AGENT]),
             Model(name="gpt-4o-mini", capabilities=[ModelCapability.IMAGE_AGENT]),
@@ -88,10 +89,10 @@ def create_anthropic_provider_config(api_key: str, base_url: Optional[str] = Non
     return ProviderConfig(
         creds=Creds(api_key=api_key, provider="anthropic", base_url=base_url),
         models=[
-            Model(name="claude-3-5-sonnet", capabilities=[]),
-            Model(name="claude-4.0-sonnet", capabilities=[]),
-            Model(name="claude-4.5-sonnet", capabilities=[]),
-            Model(name="claude-4.5-haiku", capabilities=[]),
+            Model(name="claude-sonnet-3.5", capabilities=[]),
+            Model(name="claude-sonnet-4.0", capabilities=[]),
+            Model(name="claude-sonnet-4.5", capabilities=[]),
+            Model(name="claude-haiku-4.5", capabilities=[]),
         ]
     )
 
