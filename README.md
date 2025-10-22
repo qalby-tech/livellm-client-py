@@ -80,6 +80,7 @@ The `examples/` directory contains comprehensive examples for different use case
 - [`binary_messages.py`](examples/binary_messages.py) - Working with audio and image messages
 - [`raw_client.py`](examples/raw_client.py) - Direct API access
 - [`custom_provider_config.py`](examples/custom_provider_config.py) - Custom provider configurations
+- [`mcp_tools_example.py`](examples/mcp_tools_example.py) - Using MCP tools with agents
 
 ## Configuration
 
@@ -236,6 +237,116 @@ response, messages = await proxy.agent_run(
 
 For a complete example, see [`custom_provider_config.py`](examples/custom_provider_config.py).
 
+### MCP Tools Integration
+
+The client supports MCP (Model Context Protocol) tools, allowing agents to interact with external services and resources through streamable servers.
+
+#### What are MCP Tools?
+
+MCP tools enable agents to:
+- **File System Operations**: Read, write, and manage files
+- **Database Queries**: Execute database operations and queries
+- **API Integrations**: Connect to external APIs and services
+- **Custom Business Logic**: Implement domain-specific functionality
+- **Real-time Data Access**: Access live data sources and streams
+
+#### Using MCP Tools
+
+```python
+from livellm import MCPStreamableServerInput, WebSearchInput
+
+# Create MCP tool configuration
+mcp_tool = MCPStreamableServerInput(
+    url="http://localhost:3000",  # Your MCP server URL
+    prefix="filesystem"  # Tool namespace/prefix
+)
+
+# Use with agent
+response, messages = await proxy.agent_run(
+    model="gpt-4o",
+    messages=[
+        TextMessage(role="user", content="List files in the current directory")
+    ],
+    tools=[mcp_tool],
+)
+```
+
+#### Multiple Tools Example
+
+```python
+# Combine MCP tools with other tools
+mcp_tool = MCPStreamableServerInput(
+    url="http://localhost:3000",
+    prefix="database"
+)
+
+web_search_tool = WebSearchInput(
+    search_context_size="high"
+)
+
+response, messages = await proxy.agent_run(
+    model="gpt-4o",
+    messages=[
+        TextMessage(role="user", content="Search for AI news and save to database")
+    ],
+    tools=[mcp_tool, web_search_tool],
+)
+```
+
+#### Streaming with MCP Tools
+
+```python
+# MCP tools work with streaming responses
+stream, messages = await proxy.agent_run_stream(
+    model="gpt-4o",
+    messages=[
+        TextMessage(role="user", content="Process data using the API tool")
+    ],
+    tools=[MCPStreamableServerInput(url="http://localhost:3000", prefix="api")],
+)
+
+async for chunk in stream:
+    print(chunk.output, end="", flush=True)
+```
+
+#### Common MCP Tool Configurations
+
+```python
+# File system operations
+filesystem_tool = MCPStreamableServerInput(
+    url="http://localhost:3001",
+    prefix="filesystem"
+)
+
+# Database operations
+database_tool = MCPStreamableServerInput(
+    url="http://localhost:3002",
+    prefix="database"
+)
+
+# External API integrations
+api_tool = MCPStreamableServerInput(
+    url="http://localhost:3003",
+    prefix="external_api"
+)
+
+# Custom business tools
+business_tool = MCPStreamableServerInput(
+    url="http://localhost:3004",
+    prefix="business_tools"
+)
+```
+
+#### Benefits of MCP Tools
+
+1. **Extensibility**: Add custom functionality to your agents
+2. **Real-time Data**: Connect to live data sources and APIs
+3. **Modularity**: Separate tool logic from agent logic
+4. **Streaming Support**: Handle long-running operations efficiently
+5. **Security**: Controlled access to resources with audit trails
+
+For a complete example with multiple use cases, see [`mcp_tools_example.py`](examples/mcp_tools_example.py).
+
 ## API Reference
 
 ### Core Methods
@@ -246,7 +357,7 @@ Run a conversation with the specified model.
 **Parameters:**
 - `model` (str): Model identifier (e.g., "gpt-4o", "claude-3")
 - `messages` (List[Message]): List of conversation messages
-- `tools` (List[Tool]): List of available tools
+- `tools` (List[Union[WebSearchInput, MCPStreamableServerInput]]): List of available tools
 - `model_capabilities` (List[ModelCapability], optional): Model capabilities
 - `force_binary_transformation` (bool, optional): Force transformation of binary messages
 
@@ -256,6 +367,13 @@ Run a conversation with the specified model.
 
 #### `agent_run_stream(model, messages, tools, **kwargs)`
 Run a streaming conversation.
+
+**Parameters:**
+- `model` (str): Model identifier (e.g., "gpt-4o", "claude-3")
+- `messages` (List[Message]): List of conversation messages
+- `tools` (List[Union[WebSearchInput, MCPStreamableServerInput]]): List of available tools
+- `model_capabilities` (List[ModelCapability], optional): Model capabilities
+- `force_binary_transformation` (bool, optional): Force transformation of binary messages
 
 **Returns:**
 - `stream`: Async generator of response chunks
