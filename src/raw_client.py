@@ -1,112 +1,16 @@
 """Raw HTTP client for the LiveLLM Proxy API using httpx."""
 
-from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Union
+from typing import Any, AsyncIterator, Dict, Optional, Union
 import json
 import httpx
-from pydantic import BaseModel, Field
 
-
-# ============================================================================
-# Request/Response Models
-# ============================================================================
-
-class MessageRole(str):
-    """Role of a message."""
-    USER = "user"
-    MODEL = "model"
-    SYSTEM = "system"
-
-
-class TextMessage(BaseModel):
-    """Text message in a conversation."""
-    role: MessageRole = Field(description="The role of the message")
-    content: str = Field(description="The content of the message")
-
-
-class BinaryMessage(BaseModel):
-    """Binary message (e.g., image, audio) - always from user."""
-    role: MessageRole = Field(default=MessageRole.USER, description="The role of the message")
-    content: bytes = Field(description="The content of the message", format="binary")
-    mime_type: str = Field(description="The MIME type of the content, only user can supply such")
-    caption: Optional[str] = Field(None, description="Caption for the binary message")
-
-
-class ToolKind(str):
-    """Type of tool."""
-    WEB_SEARCH = "web_search"
-    MCP_STREAMABLE_SERVER = "mcp_streamable_server"
-
-
-class WebSearchInput(BaseModel):
-    """Web search tool configuration."""
-    search_context_size: Literal["low", "medium", "high"] = Field(
-        default="medium",
-        description="The context size for the search"
-    )
-
-
-class MCPStreamableServerInput(BaseModel):
-    """MCP server tool configuration."""
-    url: str = Field(description="The URL of the MCP server")
-    prefix: str = Field(description="The prefix of the MCP server")
-
-
-class AgentRequest(BaseModel):
-    """Request to run an agent."""
-    model: str = Field(description="The model to use")
-    messages: List[Union[TextMessage, BinaryMessage]] = Field(description="Conversation messages")
-    tools: List[Union[WebSearchInput, MCPStreamableServerInput]] = Field(description="Tools available to the agent")
-    gen_config: Optional[Dict[str, Any]] = Field(
-        None,
-        description="The configuration for the generation"
-    )
-
-
-class AgentResponseUsage(BaseModel):
-    """Token usage information."""
-    input_tokens: int = Field(description="The number of input tokens used")
-    output_tokens: int = Field(description="The number of output tokens used")
-
-
-class AgentResponse(BaseModel):
-    """Response from an agent run."""
-    output: str = Field(description="The output of the response")
-    usage: AgentResponseUsage = Field(description="The usage of the response")
-
-
-class SpeakRequest(BaseModel):
-    """Request to convert text to speech."""
-    model: str = Field(description="The model to use")
-    text: str = Field(description="The text to speak")
-    voice: str = Field(description="The voice to use")
-    output_format: str = Field(description="The output format of the audio")
-    gen_config: Optional[Dict[str, Any]] = Field(
-        None,
-        description="The configuration for the generation"
-    )
-
-
-class TranscribeResponse(BaseModel):
-    """Response from audio transcription."""
-    text: str = Field(description="The text of the transcription")
-    language: Optional[str] = Field(None, description="The language of the transcription")
-
-
-class ValidationError(BaseModel):
-    """Validation error details."""
-    loc: List[Union[str, int]] = Field(description="Location of the error")
-    msg: str = Field(description="Error message")
-    type: str = Field(description="Error type")
-
-
-class HTTPValidationError(BaseModel):
-    """HTTP validation error response."""
-    detail: List[ValidationError]
-
-
-# ============================================================================
-# Raw HTTP Client
-# ============================================================================
+from .models import (
+    AgentRequest,
+    AgentResponse,
+    SpeakRequest,
+    TranscribeResponse,
+    FileType,
+)
 
 class LivellmProxyClient:
     """
@@ -123,15 +27,13 @@ class LivellmProxyClient:
     def __init__(
         self,
         base_url: str,
-        timeout: float = 30.0,
-        http2: bool = True,
+        timeout: float = 30.0
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.client = httpx.AsyncClient(
             base_url=self.base_url,
-            timeout=timeout,
-            http2=http2,
+            timeout=timeout
         )
             
     def build_headers(
@@ -287,7 +189,7 @@ class LivellmProxyClient:
     async def audio_transcribe(
         self,
         model: str,
-        file: Union[bytes, tuple[str, bytes]],
+        file: FileType,
         api_key: str,
         provider: str,
         language: Optional[str] = None,
@@ -319,10 +221,7 @@ class LivellmProxyClient:
             data["gen_config"] = json.dumps(gen_config)
         
         # Prepare file
-        if isinstance(file, tuple):
-            files = {"file": file}
-        else:
-            files = {"file": ("audio", file)}
+        files = {"file": file}
         
         response = await self.client.post(
             "/audio/transcribe",

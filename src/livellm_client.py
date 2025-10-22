@@ -1,86 +1,28 @@
-from pydantic import BaseModel, Field
-from typing import Optional, List, Union, Tuple, AsyncIterator, Dict, Any, Callable, Coroutine
-from raw_client import LivellmProxyClient
-from raw_client import TextMessage, BinaryMessage, MessageRole
-from raw_client import WebSearchInput, MCPStreamableServerInput
-from raw_client import AgentRequest, AgentResponse, SpeakRequest, TranscribeResponse
-from enum import Enum
+"""High-level client for LiveLLM Proxy with fallback and transformation support."""
 
+from typing import Optional, List, Union, Tuple, AsyncIterator, Dict, Any, Callable, Coroutine
 import logging
+
+from .raw_client import LivellmProxyClient
+from .models import (
+    TextMessage,
+    BinaryMessage,
+    MessageRole,
+    WebSearchInput,
+    MCPStreamableServerInput,
+    AgentRequest,
+    AgentResponse,
+    SpeakRequest,
+    TranscribeResponse,
+    Creds,
+    ModelCapability,
+    Model,
+    ProviderConfig,
+    FileType,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-class Creds(BaseModel):
-    api_key: str = Field(description="The API key to use for the provider")
-    provider: str = Field(description="The provider to use")
-    base_url: Optional[str] = Field(None, description="The base URL to use for the provider")
-
-class ModelCapability(Enum):
-    AUDIO_AGENT = "audio_agent"
-    IMAGE_AGENT = "image_agent"
-    VIDEO_AGENT = "video_agent"
-    SPEAK = "speak"
-    TRANSCRIBE = "transcribe"
-
-class Model(BaseModel):
-    name: str = Field(description="The name of the model")
-    capabilities: List[ModelCapability] = Field(description="The capabilities of the model")
-
-
-class ProviderConfig(BaseModel):
-    creds: Creds = Field(description="The credentials for the provider")
-    models: List[Model] = Field(description="The models for the provider")
-
-
-def create_openai_provider_config(api_key: str, base_url: Optional[str] = None) -> ProviderConfig:
-    return ProviderConfig(
-        creds=Creds(api_key=api_key, provider="openai", base_url=base_url),
-        models=[
-            Model(name="gpt-5-mini", capabilities=[]),
-            Model(name="gpt-5", capabilities=[]),
-            Model(name="gpt-4o", capabilities=[ModelCapability.IMAGE_AGENT]),
-            Model(name="gpt-4o-mini", capabilities=[ModelCapability.IMAGE_AGENT]),
-            Model(name="tts-1", capabilities=[ModelCapability.SPEAK]),
-            Model(name="tts-1-hd", capabilities=[ModelCapability.SPEAK]),
-            Model(name="whisper-1", capabilities=[ModelCapability.TRANSCRIBE]),
-        ]
-    )
-
-def create_google_provider_config(api_key: str, base_url: Optional[str] = None) -> ProviderConfig:
-    gemini_caps = [ModelCapability.IMAGE_AGENT, ModelCapability.VIDEO_AGENT, ModelCapability.AUDIO_AGENT]
-    return ProviderConfig(
-        creds=Creds(api_key=api_key, provider="google", base_url=base_url),
-        models=[
-            Model(name="gemini-2.5-flash-lite", capabilities=gemini_caps),
-            Model(name="gemini-2.5-flash", capabilities=gemini_caps),
-            Model(name="gemini-2.5-pro", capabilities=gemini_caps),
-        ],
-    )
-
-def create_elevenlabs_provider_config(api_key: str, base_url: Optional[str] = None) -> ProviderConfig:
-    return ProviderConfig(
-        creds=Creds(api_key=api_key, provider="elevenlabs", base_url=base_url),
-        models=[
-            Model(name="elevenlabs_multilingual_v2", capabilities=[ModelCapability.SPEAK]),
-            Model(name="eleven_flash_v2_5", capabilities=[ModelCapability.SPEAK]),
-            Model(name="eleven_flash_v2", capabilities=[ModelCapability.SPEAK]),
-            Model(name="eleven_v3", capabilities=[ModelCapability.SPEAK]),
-            Model(name="scribe_v1", capabilities=[ModelCapability.TRANSCRIBE]),
-        ],
-    )
-
-
-def create_anthropic_provider_config(api_key: str, base_url: Optional[str] = None) -> ProviderConfig:
-    return ProviderConfig(
-        creds=Creds(api_key=api_key, provider="anthropic", base_url=base_url),
-        models=[
-            Model(name="claude-3-5-sonnet", capabilities=[]),
-            Model(name="claude-4.0-sonnet", capabilities=[]),
-            Model(name="claude-4.5-sonnet", capabilities=[]),
-            Model(name="claude-4.5-haiku", capabilities=[]),
-        ]
-    )
 
 class LivellmProxy:
 
@@ -106,11 +48,14 @@ class LivellmProxy:
                     fallback_creds.append(provider.creds)
         return [primary_creds] + fallback_creds
     
-    async def __run_with_fallback(self, executable: Callable[Creds, Any], model: str, primary_creds: Creds) -> Any:
+    async def __run_with_fallback(self, executable: Callable[Creds, Any], model: str, primary_creds: Creds, stream: bool = False) -> Any:
         creds = await self.__get_fallback_creds(model, primary_creds)
         for cred in creds:
             try:
-                return await executable(cred)
+                if stream:
+                    return executable(cred)
+                else:
+                    return await executable(cred)
             except Exception as e:
                 logger.error(f"Error running executable with creds {cred}: {e}")
                 continue
@@ -124,7 +69,7 @@ class LivellmProxy:
     async def __agent_run_stream_with_fallback(self, request: AgentRequest, primary_creds: Creds) -> AsyncIterator[AgentResponse]:
         def exec_agent_stream(cred: Creds) -> AsyncIterator[AgentResponse]:
             return self.client.agent_run_stream(request, cred.api_key, cred.provider, cred.base_url)
-        response = await self.__run_with_fallback(exec_agent_stream, request.model, primary_creds)
+        response: AsyncIterator[AgentResponse] = await self.__run_with_fallback(exec_agent_stream, request.model, primary_creds, stream=True)
         async for chunk in response:
             yield chunk
 
@@ -136,14 +81,14 @@ class LivellmProxy:
     async def __audio_speak_stream_with_fallback(self, request: SpeakRequest, primary_creds: Creds) -> AsyncIterator[bytes]:
         def exec_speak_stream(cred: Creds) -> AsyncIterator[bytes]:
             return self.client.audio_speak_stream(request, cred.api_key, cred.provider, cred.base_url)
-        response = await self.__run_with_fallback(exec_speak_stream, request.model, primary_creds)
+        response: AsyncIterator[bytes] = await self.__run_with_fallback(exec_speak_stream, request.model, primary_creds, stream=True)
         async for chunk in response:
             yield chunk
     
     async def __audio_transcribe_with_fallback(
         self, 
         model: str,
-        file: Union[bytes, tuple[str, bytes]],
+        file: FileType,
         primary_creds: Creds,
         language: Optional[str] = None,
         gen_config: Optional[Dict[str, Any]] = None
@@ -186,34 +131,43 @@ class LivellmProxy:
         response = await self.__agent_run_with_fallback(agent_request, creds)
         return response.output
     
-    async def __audio_to_text(self, audio_bytes: bytes, mime_type: str, model: str, creds: Creds) -> str:
+    async def __audio_to_text(self, binary_message, model: str, creds: Creds) -> str:
         system = """
         You will act as ASR.
         You will be given an audio file and you will need to transcribe it to text.
         Transcribe the audio in a language that is most likely to be the language of the audio.
         Return ONLY the text of the transcription. Nothing more
+        Return result like this:
+        <audio_transcription>
+        [text of the transcription]
+        </audio_transcription>
         """
-        binary_message = BinaryMessage(content=audio_bytes, mime_type=mime_type)
         return await self.__run_agent_as_binary_transformer(binary_message, model, system, creds)
 
-    async def __image_to_text(self, image_bytes: bytes, mime_type: str, model: str, creds: Creds) -> str:
+    async def __image_to_text(self, binary_message, model: str, creds: Creds) -> str:
         system = """
         You will act as OCR.
         You will be given an image file and you will need to fully describe the image in detail.
         Return ONLY description of the image. Nothing more
         The description should be in a language that is most likely to be the language of the image.
+        Return result like this:
+        <image_description>
+        [description of the image]
+        </image_description>
         """
-        binary_message = BinaryMessage(content=image_bytes, mime_type=mime_type)
         return await self.__run_agent_as_binary_transformer(binary_message, model, system, creds)
     
-    async def __video_to_text(self, video_bytes: bytes, mime_type: str, model: str, creds: Creds) -> str:
+    async def __video_to_text(self, binary_message, model: str, creds: Creds) -> str:
         system = """
         You will act as VSR.
         You will be given a video file and you will need to fully describe the video in detail.
         Return ONLY description of the video. Nothing more
         The description should be in a language that is most likely to be the language of the video.
+        Return result like this:
+        <video_description>
+        [description of the video]
+        </video_description>
         """
-        binary_message = BinaryMessage(content=video_bytes, mime_type=mime_type)
         return await self.__run_agent_as_binary_transformer(binary_message, model, system, creds)
     
 
@@ -238,19 +192,19 @@ class LivellmProxy:
                 model, creds = primary_model, self.primary_creds
             else:
                 model, creds = await self.__find_model_with_capability(ModelCapability.IMAGE_AGENT)
-            return await self.__image_to_text(binary_message.content, binary_message.mime_type, model.name, creds)
+            return await self.__image_to_text(binary_message, model.name, creds)
         elif "video" in binary_message.mime_type:
             if ModelCapability.VIDEO_AGENT in primary_model.capabilities:
                 model, creds = primary_model, self.primary_creds
             else:
                 model, creds = await self.__find_model_with_capability(ModelCapability.VIDEO_AGENT)
-            return await self.__video_to_text(binary_message.content, binary_message.mime_type, model.name, creds)
+            return await self.__video_to_text(binary_message, model.name, creds)
         elif "audio" in binary_message.mime_type:
             if ModelCapability.AUDIO_AGENT in primary_model.capabilities:
                 model, creds = primary_model, self.primary_creds
             else:
                 model, creds = await self.__find_model_with_capability(ModelCapability.AUDIO_AGENT)
-            return await self.__audio_to_text(binary_message.content, binary_message.mime_type, model.name, creds)
+            return await self.__audio_to_text(binary_message, model.name, creds)
         else:
             raise ValueError(f"Unsupported mime type: {binary_message.mime_type}")
         
@@ -261,7 +215,8 @@ class LivellmProxy:
         __messages = []
         for message in messages:
             if isinstance(message, BinaryMessage):
-                __messages.append(await self.__binary_to_text(message, primary_model))
+                text_content = await self.__binary_to_text(message, primary_model)
+                __messages.append(TextMessage(role=message.role, content=text_content))
             else:
                 __messages.append(message)
         return __messages
@@ -447,7 +402,7 @@ class LivellmProxy:
     async def audio_transcribe(
         self,
         model: str,
-        file: Union[bytes, tuple[str, bytes]],
+        file: FileType,
         language: Optional[str] = None,
         **gen_config
     ) -> TranscribeResponse:

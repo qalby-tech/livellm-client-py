@@ -1,38 +1,8 @@
-# Virtual environments
-venv/
-env/
-ENV/
-.venv/
-
-# Python cache
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-
-# Environment variables
 .env
-.env.local
+.venv
+__pycache__
 
-# Distribution / packaging
-build/
-dist/
-*.egg-info/
-.eggs/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Example outputs
-output.mp3
-audio.mp3
+# Test outputs
+*.mp3
+*.wav
+test.py

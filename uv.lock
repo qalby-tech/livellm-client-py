@@ -81,9 +81,9 @@ wheels = [
 ]
 
 [[package]]
-name = "livellm-proxy"
+name = "livellm-proxy-client"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
