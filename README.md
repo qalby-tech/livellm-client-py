@@ -79,6 +79,7 @@ The `examples/` directory contains comprehensive examples for different use case
 ### Advanced Features
 - [`binary_messages.py`](examples/binary_messages.py) - Working with audio and image messages
 - [`raw_client.py`](examples/raw_client.py) - Direct API access
+- [`custom_provider_config.py`](examples/custom_provider_config.py) - Custom provider configurations
 
 ## Configuration
 
@@ -119,6 +120,121 @@ proxy = LivellmProxy(
     ]
 )
 ```
+
+### Custom Provider Configurations
+
+The client supports custom provider configurations that allow you to define your own models, capabilities, and endpoints. This is particularly useful for:
+
+#### Why Use Custom Configurations?
+
+1. **Cost Optimization**: Only include models you actually use, reducing initialization overhead
+2. **Performance**: Faster startup times with fewer models to process
+3. **Self-Hosted Models**: Use custom base URLs for your own model deployments
+4. **Capability Matching**: Define exactly which models support which features
+5. **Fallback Reliability**: Automatic failover between providers when models are unavailable
+
+#### How It Works
+
+The client uses a fallback system that:
+- Tries the primary provider first
+- Automatically falls back to alternative providers if the model fails or doesn't support the input
+- Transforms binary messages (audio/images) when models don't support them natively
+- Heuristically checks model capabilities before making requests
+
+#### Creating Custom Configurations
+
+```python
+from livellm import ProviderConfig, Creds, Model, ModelCapability
+
+def create_custom_provider_config(api_key: str, base_url: str):
+    """Create a custom provider configuration."""
+    return ProviderConfig(
+        creds=Creds(
+            api_key=api_key,
+            provider="custom",  # Your provider name
+            base_url=base_url
+        ),
+        models=[
+            # Define only the models you need
+            Model(
+                name="my-custom-model",
+                capabilities=[ModelCapability.IMAGE_AGENT]  # Supports images
+            ),
+            Model(
+                name="my-text-model",
+                capabilities=[]  # Text-only model
+            ),
+        ]
+    )
+
+# Use in your client
+proxy = LivellmProxy(
+    base_url="http://localhost:8000",
+    primary_creds=Creds(api_key="primary-key", provider="openai"),
+    providers=[
+        create_custom_provider_config("custom-key", "http://localhost:11434"),
+        # Other providers...
+    ]
+)
+```
+
+#### Model Capabilities
+
+Define what each model can handle:
+
+```python
+from livellm import ModelCapability
+
+# Available capabilities:
+ModelCapability.AUDIO_AGENT    # Can process audio messages
+ModelCapability.IMAGE_AGENT    # Can process image messages  
+ModelCapability.VIDEO_AGENT    # Can process video messages
+ModelCapability.SPEAK          # Can generate speech (TTS)
+ModelCapability.TRANSCRIBE     # Can transcribe audio (STT)
+```
+
+#### Self-Hosted Models
+
+Use custom configurations for self-hosted models:
+
+```python
+def create_self_hosted_config(api_key: str, base_url: str):
+    """Configuration for self-hosted models."""
+    return ProviderConfig(
+        creds=Creds(
+            api_key=api_key,
+            provider="self-hosted",
+            base_url=base_url  # Your model server URL
+        ),
+        models=[
+            Model(
+                name="llama-3.1-8b",
+                capabilities=[]  # Text-only
+            ),
+            Model(
+                name="llava-1.6-7b", 
+                capabilities=[ModelCapability.IMAGE_AGENT]
+            ),
+        ]
+    )
+```
+
+#### Fallback Behavior Example
+
+```python
+# The client will automatically try different providers
+response, messages = await proxy.agent_run(
+    model="gpt-4o-mini",  # Try this model first
+    messages=[
+        TextMessage(role="user", content="Hello!")
+    ],
+    tools=[],
+)
+# If gpt-4o-mini fails, it will try other providers with the same model
+# If the model doesn't exist in other providers, it will try similar models
+```
+
+For a complete example, see [`custom_provider_config.py`](examples/custom_provider_config.py).
 
 ## API Reference
 
