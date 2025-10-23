@@ -96,8 +96,9 @@ def create_custom_google_config(api_key: str, base_url: str = None):
     - Use different models for different use cases
     """
     # Define capabilities for different model tiers
-    basic_caps = [ModelCapability.IMAGE_AGENT]  # Images only
+    basic_caps = [ModelCapability.TEXT_AGENT, ModelCapability.IMAGE_AGENT]  # Images only
     advanced_caps = [
+        ModelCapability.TEXT_AGENT,
         ModelCapability.IMAGE_AGENT,
         ModelCapability.VIDEO_AGENT,
         ModelCapability.AUDIO_AGENT
@@ -153,7 +154,7 @@ def create_self_hosted_config(api_key: str, base_url: str):
             # Self-hosted multimodal model
             Model(
                 name="llava-1.6-7b",
-                capabilities=[ModelCapability.IMAGE_AGENT]
+                capabilities=[ModelCapability.TEXT_AGENT, ModelCapability.IMAGE_AGENT]
             ),
         ]
     )

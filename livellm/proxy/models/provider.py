@@ -17,6 +17,7 @@ class ModelCapability(Enum):
     AUDIO_AGENT = "audio_agent"
     IMAGE_AGENT = "image_agent"
     VIDEO_AGENT = "video_agent"
+    TEXT_AGENT = "text_agent"
     SPEAK = "speak"
     TRANSCRIBE = "transcribe"
 
@@ -25,7 +26,6 @@ class Model(BaseModel):
     """Model configuration."""
     name: str = Field(description="The name of the model")
     capabilities: List[ModelCapability] = Field(description="The capabilities of the model")
-
 
 class ProviderConfig(BaseModel):
     """Provider configuration."""

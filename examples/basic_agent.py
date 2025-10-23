@@ -34,7 +34,7 @@ async def main():
         models=[
             Model(
                 name="gpt-4o",
-                capabilities=[ModelCapability.IMAGE_AGENT]
+                capabilities=[ModelCapability.TEXT_AGENT, ModelCapability.IMAGE_AGENT]
             ),
         ]
     )

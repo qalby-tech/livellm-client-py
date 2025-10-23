@@ -18,11 +18,11 @@ def create_openai_provider_config(api_key: str, base_url: Optional[str] = None) 
     return ProviderConfig(
         creds=Creds(api_key=api_key, provider="openai", base_url=base_url),
         models=[
-            Model(name="gpt-5-mini", capabilities=[]),
-            Model(name="gpt-5-nano", capabilities=[]),
-            Model(name="gpt-5", capabilities=[]),
-            Model(name="gpt-4o", capabilities=[ModelCapability.IMAGE_AGENT]),
-            Model(name="gpt-4o-mini", capabilities=[ModelCapability.IMAGE_AGENT]),
+            Model(name="gpt-5-mini", capabilities=[ModelCapability.TEXT_AGENT]),
+            Model(name="gpt-5-nano", capabilities=[ModelCapability.TEXT_AGENT]),
+            Model(name="gpt-5", capabilities=[ModelCapability.TEXT_AGENT]),
+            Model(name="gpt-4o", capabilities=[ModelCapability.TEXT_AGENT, ModelCapability.IMAGE_AGENT]),
+            Model(name="gpt-4o-mini", capabilities=[ModelCapability.TEXT_AGENT, ModelCapability.IMAGE_AGENT]),
             Model(name="tts-1", capabilities=[ModelCapability.SPEAK]),
             Model(name="tts-1-hd", capabilities=[ModelCapability.SPEAK]),
             Model(name="whisper-1", capabilities=[ModelCapability.TRANSCRIBE]),
@@ -41,7 +41,11 @@ def create_google_provider_config(api_key: str, base_url: Optional[str] = None) 
     Returns:
         ProviderConfig for Google
     """
-    gemini_caps = [ModelCapability.IMAGE_AGENT, ModelCapability.VIDEO_AGENT, ModelCapability.AUDIO_AGENT]
+    gemini_caps = [
+        ModelCapability.TEXT_AGENT, 
+        ModelCapability.IMAGE_AGENT, 
+        ModelCapability.VIDEO_AGENT, 
+        ModelCapability.AUDIO_AGENT]
     return ProviderConfig(
         creds=Creds(api_key=api_key, provider="google", base_url=base_url),
         models=[
@@ -89,10 +93,10 @@ def create_anthropic_provider_config(api_key: str, base_url: Optional[str] = Non
     return ProviderConfig(
         creds=Creds(api_key=api_key, provider="anthropic", base_url=base_url),
         models=[
-            Model(name="claude-sonnet-3.5", capabilities=[]),
-            Model(name="claude-sonnet-4.0", capabilities=[]),
-            Model(name="claude-sonnet-4.5", capabilities=[]),
-            Model(name="claude-haiku-4.5", capabilities=[]),
+            Model(name="claude-sonnet-3.5", capabilities=[ModelCapability.TEXT_AGENT]),
+            Model(name="claude-sonnet-4.0", capabilities=[ModelCapability.TEXT_AGENT]),
+            Model(name="claude-sonnet-4.5", capabilities=[ModelCapability.TEXT_AGENT]),
+            Model(name="claude-haiku-4.5", capabilities=[ModelCapability.TEXT_AGENT]),
         ]
     )
 
