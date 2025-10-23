@@ -174,11 +174,6 @@ async def demonstrate_custom_configs():
     # Initialize the proxy with custom configurations
     proxy = LivellmProxy(
         base_url="http://localhost:8000",  # Your proxy server URL
-        primary_creds=Creds(
-            api_key="your-primary-key",
-            provider="openai",
-            base_url="https://api.openai.com/v1"
-        ),
         providers=[
             openai_config,
             anthropic_config,
@@ -245,11 +240,6 @@ async def demonstrate_fallback_behavior():
     
     proxy = LivellmProxy(
         base_url="http://localhost:8000",
-        primary_creds=Creds(
-            api_key="your-primary-key",
-            provider="openai",
-            base_url="https://api.openai.com/v1"
-        ),
         providers=[openai_config, anthropic_config]
     )
     

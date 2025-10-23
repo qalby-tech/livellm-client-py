@@ -31,13 +31,8 @@ async def main():
     # Initialize the proxy client
     proxy = LivellmProxy(
         base_url="http://localhost:8000",
-    primary_creds=Creds(
-        api_key="your-api-key",
-        provider="openai",
-        base_url="https://api.openai.com/v1"
-    ),
-    providers=[
-        create_openai_provider_config("your-api-key", base_url="https://api.openai.com/v1"),
+        providers=[
+            create_openai_provider_config("your-api-key", base_url="https://api.openai.com/v1"),
         ]
     )
     
@@ -109,11 +104,6 @@ from livellm import LivellmProxy, Creds
 
 proxy = LivellmProxy(
     base_url="http://localhost:8000",  # Your proxy server URL
-    primary_creds=Creds(
-        api_key="your-primary-key",
-        provider="openai",
-        base_url="https://api.openai.com/v1"
-    ),
     providers=[
         openai_provider,
         google_provider,
@@ -171,7 +161,6 @@ def create_custom_provider_config(api_key: str, base_url: str):
 # Use in your client
 proxy = LivellmProxy(
     base_url="http://localhost:8000",
-    primary_creds=Creds(api_key="primary-key", provider="openai"),
     providers=[
         create_custom_provider_config("custom-key", "http://localhost:11434"),
         # Other providers...
@@ -324,17 +313,6 @@ database_tool = MCPStreamableServerInput(
     prefix="database"
 )
 
-# External API integrations
-api_tool = MCPStreamableServerInput(
-    url="http://localhost:3003",
-    prefix="external_api"
-)
-
-# Custom business tools
-business_tool = MCPStreamableServerInput(
-    url="http://localhost:3004",
-    prefix="business_tools"
-)
 ```
 
 #### Benefits of MCP Tools
@@ -358,7 +336,6 @@ Run a conversation with the specified model.
 - `model` (str): Model identifier (e.g., "gpt-4o", "claude-3")
 - `messages` (List[Message]): List of conversation messages
 - `tools` (List[Union[WebSearchInput, MCPStreamableServerInput]]): List of available tools
-- `model_capabilities` (List[ModelCapability], optional): Model capabilities
 - `force_binary_transformation` (bool, optional): Force transformation of binary messages
 
 **Returns:**
@@ -372,7 +349,6 @@ Run a streaming conversation.
 - `model` (str): Model identifier (e.g., "gpt-4o", "claude-3")
 - `messages` (List[Message]): List of conversation messages
 - `tools` (List[Union[WebSearchInput, MCPStreamableServerInput]]): List of available tools
-- `model_capabilities` (List[ModelCapability], optional): Model capabilities
 - `force_binary_transformation` (bool, optional): Force transformation of binary messages
 
 **Returns:**
@@ -424,11 +400,6 @@ BinaryMessage.from_bytes(
     caption="Audio description"
 )
 
-# From file
-BinaryMessage.from_file(
-    file_path="path/to/file.wav",
-    caption="Audio description"
-)
 ```
 
 ## Binary Message Transformation
@@ -444,8 +415,7 @@ The client automatically handles binary messages (audio, images) when the target
 response, messages = await proxy.agent_run(
     model="gpt-4o",  # Doesn't support audio
     messages=[
-        BinaryMessage.from_bytes(audio_bytes, "audio/wav", "What's in this audio?"),
-        TextMessage(role="user", content="Based on the audio, what did you hear?")
+        BinaryMessage.from_bytes(audio_bytes, "audio/wav", "What's in this audio?")
     ],
     tools=[]
 )

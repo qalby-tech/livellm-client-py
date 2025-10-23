@@ -80,7 +80,9 @@ class LivellmProxyClient:
             json=request.model_dump(exclude_none=True),
             headers=self.build_headers(api_key, provider, base_url),
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            error_response = response.json()
+            raise ValueError(f"Error running agent: {error_response}")
         
         return AgentResponse.model_validate(response.json())
     
@@ -110,7 +112,8 @@ class LivellmProxyClient:
             headers=self.build_headers(api_key, provider, base_url),
         ) as response:
             if response.status_code != 200:
-                error_response = response.decode("utf-8")
+                error_response = await response.aread()
+                error_response = error_response.decode("utf-8")
                 raise ValueError(f"Error streaming agent: {error_response}")
             
             async for line in response.aiter_lines():

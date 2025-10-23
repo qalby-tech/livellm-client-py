@@ -10,6 +10,9 @@ from livellm import (
     Creds,
     TextMessage,
     create_google_provider_config,
+    ProviderConfig,
+    Model,
+    ModelCapability,
 )
 
 
@@ -21,15 +24,26 @@ async def main():
     OPENAI_BASE_URL = "https://api.openai.com/v1"  # OpenAI API URL
     GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com"  # Google API URL
     
-    # Initialize the proxy client
-    proxy = LivellmProxy(
-        base_url=BASE_URL,
-        primary_creds=Creds(
+    # Create OpenAI provider config
+    openai_config = ProviderConfig(
+        creds=Creds(
             api_key=API_KEY,
             provider="openai",
             base_url=OPENAI_BASE_URL
         ),
+        models=[
+            Model(
+                name="gpt-4o",
+                capabilities=[ModelCapability.IMAGE_AGENT]
+            ),
+        ]
+    )
+    
+    # Initialize the proxy client
+    proxy = LivellmProxy(
+        base_url=BASE_URL,
         providers=[
+            openai_config,
             create_google_provider_config(API_KEY, base_url=GOOGLE_BASE_URL),
         ]
     )

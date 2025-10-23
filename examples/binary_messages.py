@@ -43,11 +43,6 @@ async def test_audio_binary_unsupported():
     # Initialize the proxy client
     proxy = LivellmProxy(
         base_url=BASE_URL,
-        primary_creds=Creds(
-            api_key=API_KEY,
-            provider="openai",
-            base_url="https://api.openai.com/v1"
-        ),
         providers=[
             create_google_provider_config(API_KEY, base_url=GOOGLE_BASE_URL),
         ]
@@ -73,7 +68,6 @@ async def test_audio_binary_unsupported():
             TextMessage(role="user", content="Based on the audio, what did you hear?"),
         ],
         tools=[],
-        model_capabilities=[],  # No audio capability
     )
     
     print(f"Response: {response.output}")
@@ -105,11 +99,6 @@ async def test_audio_binary_force_transform():
     # Initialize the proxy client
     proxy = LivellmProxy(
         base_url=BASE_URL,
-        primary_creds=Creds(
-            api_key=API_KEY,
-            provider="openai",
-            base_url="https://api.openai.com/v1"
-        ),
         providers=[
             create_google_provider_config(API_KEY, base_url=GOOGLE_BASE_URL),
         ]
@@ -170,11 +159,6 @@ async def test_image_binary_unsupported():
     # Initialize the proxy client
     proxy = LivellmProxy(
         base_url=BASE_URL,
-        primary_creds=Creds(
-            api_key=API_KEY,
-            provider="openai",
-            base_url="https://api.openai.com/v1"
-        ),
         providers=[
             create_google_provider_config(API_KEY, base_url=GOOGLE_BASE_URL),
         ]
@@ -195,7 +179,6 @@ async def test_image_binary_unsupported():
             TextMessage(role="user", content="Describe what you see."),
         ],
         tools=[],
-        model_capabilities=[],  # No image capability
     )
     
     print(f"Response: {response.output}")

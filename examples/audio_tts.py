@@ -26,11 +26,6 @@ async def test_regular_tts():
     # Initialize the proxy client
     proxy = LivellmProxy(
         base_url=BASE_URL,
-        primary_creds=Creds(
-            api_key=API_KEY,
-            provider="openai",
-            base_url=OPENAI_BASE_URL
-        ),
         providers=[
             create_openai_provider_config(API_KEY, base_url=OPENAI_BASE_URL),
         ]
@@ -65,11 +60,6 @@ async def test_streaming_tts():
     # Initialize the proxy client
     proxy = LivellmProxy(
         base_url=BASE_URL,
-        primary_creds=Creds(
-            api_key=API_KEY,
-            provider="openai",
-            base_url=OPENAI_BASE_URL
-        ),
         providers=[
             create_openai_provider_config(API_KEY, base_url=OPENAI_BASE_URL),
         ]

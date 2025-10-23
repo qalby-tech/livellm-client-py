@@ -20,36 +20,58 @@ from .models import (
     ProviderConfig,
     FileType,
 )
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 class LivellmProxy:
 
-    def __init__(self, base_url: str, primary_creds: Creds, providers: List[ProviderConfig], timeout: float = 30.0):
+    def __init__(self, base_url: str, providers: List[ProviderConfig], timeout: float = 30.0):
         """
-        a list of creds is used to handle fallback
-        fallback works like this:
-        on each request, the client will heuristically check if model can actually run given the input
-        if it can't, the client will try the next cred in the list
-        in agent case, if some of the messages are not supported by th model,
+        Provider-based model resolution with fallback support.
+        Fallback works like this:
+        on each request, the client will find all providers that support the given model
+        and try them in sequence until success.
+        in agent case, if some of the messages are not supported by the model,
         the client will transform this exact message and then try the original.
         """
-        self.primary_creds = primary_creds
         self.providers = providers
         self.client = LivellmProxyClient(base_url=base_url, timeout=timeout)
     
-
-    async def __get_fallback_creds(self, model: str, primary_creds: Creds) -> List[Creds]:
-        fallback_creds = []
+    @lru_cache(maxsize=128)
+    def __get_providers_for_model(self, model: str) -> List[Creds]:
+        """
+        Find all providers that support the given model.
+        Returns a list of credentials for providers that have the model.
+        """
+        provider_creds = []
         for provider in self.providers:
             for provided_model in provider.models:
                 if provided_model.name == model:
-                    fallback_creds.append(provider.creds)
-        return [primary_creds] + fallback_creds
+                    provider_creds.append(provider.creds)
+                    break  # Found the model in this provider, move to next provider
+        
+        if not provider_creds:
+            raise ValueError(f"No providers found that support model: {model}")
+        
+        return provider_creds
     
-    async def __run_with_fallback(self, executable: Callable[Creds, Any], model: str, primary_creds: Creds, stream: bool = False) -> Any:
-        creds = await self.__get_fallback_creds(model, primary_creds)
+    
+    @lru_cache(maxsize=128)
+    def __get_model_capabilities(self, model: str) -> List[ModelCapability]:
+        """
+        Get model capabilities from the first provider that supports the model.
+        """
+        for provider in self.providers:
+            for provided_model in provider.models:
+                if provided_model.name == model:
+                    return provided_model.capabilities
+        
+        raise ValueError(f"No providers found that support model: {model}")
+    
+    async def __run_with_fallback(self, executable: Callable[Creds, Any], model: str, stream: bool = False) -> Any:
+        creds = self.__get_providers_for_model(model)
         errors = []
         for cred in creds:
             try:
@@ -61,30 +83,30 @@ class LivellmProxy:
                 logger.error(f"Error running executable with creds {cred}: {e}")
                 errors.append((model, str(e)))
                 continue
-        errors_str = "\n\n".join([f"Model: {model},\nError: {error}" for model, error in errors])
+        errors_str = "\n".join([f"\nModel: {model},\nError: {error}" for model, error in errors])
         raise ValueError(f"After all fallback attempts, the executable failed: Errors: {errors_str}")
     
-    async def __agent_run_with_fallback(self, request: AgentRequest, primary_creds: Creds) -> AgentResponse:
+    async def __agent_run_with_fallback(self, request: AgentRequest) -> AgentResponse:
         def exec_agent(cred: Creds) -> Coroutine[Any, Any, AgentResponse]:
             return self.client.agent_run(request, cred.api_key, cred.provider, cred.base_url)
-        return await self.__run_with_fallback(exec_agent, request.model, primary_creds)
+        return await self.__run_with_fallback(exec_agent, request.model)
     
-    async def __agent_run_stream_with_fallback(self, request: AgentRequest, primary_creds: Creds) -> AsyncIterator[AgentResponse]:
+    async def __agent_run_stream_with_fallback(self, request: AgentRequest) -> AsyncIterator[AgentResponse]:
         def exec_agent_stream(cred: Creds) -> AsyncIterator[AgentResponse]:
             return self.client.agent_run_stream(request, cred.api_key, cred.provider, cred.base_url)
-        response: AsyncIterator[AgentResponse] = await self.__run_with_fallback(exec_agent_stream, request.model, primary_creds, stream=True)
+        response: AsyncIterator[AgentResponse] = await self.__run_with_fallback(exec_agent_stream, request.model, stream=True)
         async for chunk in response:
             yield chunk
 
-    async def __audio_speak_with_fallback(self, request: SpeakRequest, primary_creds: Creds) -> bytes:
+    async def __audio_speak_with_fallback(self, request: SpeakRequest) -> bytes:
         def exec_speak(cred: Creds) -> Coroutine[Any, Any, bytes]:
             return self.client.audio_speak(request, cred.api_key, cred.provider, cred.base_url)
-        return await self.__run_with_fallback(exec_speak, request.model, primary_creds)
+        return await self.__run_with_fallback(exec_speak, request.model)
     
-    async def __audio_speak_stream_with_fallback(self, request: SpeakRequest, primary_creds: Creds) -> AsyncIterator[bytes]:
+    async def __audio_speak_stream_with_fallback(self, request: SpeakRequest) -> AsyncIterator[bytes]:
         def exec_speak_stream(cred: Creds) -> AsyncIterator[bytes]:
             return self.client.audio_speak_stream(request, cred.api_key, cred.provider, cred.base_url)
-        response: AsyncIterator[bytes] = await self.__run_with_fallback(exec_speak_stream, request.model, primary_creds, stream=True)
+        response: AsyncIterator[bytes] = await self.__run_with_fallback(exec_speak_stream, request.model, stream=True)
         async for chunk in response:
             yield chunk
     
@@ -92,7 +114,6 @@ class LivellmProxy:
         self, 
         model: str,
         file: FileType,
-        primary_creds: Creds,
         language: Optional[str] = None,
         gen_config: Optional[Dict[str, Any]] = None
     ) -> TranscribeResponse:
@@ -106,15 +127,14 @@ class LivellmProxy:
                 gen_config=gen_config,
                 base_url=cred.base_url
             )
-        return await self.__run_with_fallback(exec_transcribe, model, primary_creds)
+        return await self.__run_with_fallback(exec_transcribe, model)
 
     
     async def __run_agent_as_binary_transformer(
         self, 
         binary_message: BinaryMessage, 
         model: str, 
-        system_prompt: str,
-        creds: Creds
+        system_prompt: str
     ) -> str:
         """
         Run an agent as a binary transformer.
@@ -131,10 +151,22 @@ class LivellmProxy:
                 "temperature": 0.0
             },
         )
-        response = await self.__agent_run_with_fallback(agent_request, creds)
+        response = await self.__agent_run_with_fallback(agent_request)
         return response.output
     
-    async def __audio_to_text(self, binary_message, model: str, creds: Creds) -> str:
+    async def __run_binary_transformer_with_fallback(self, binary_message: BinaryMessage, models: List[Model], system_prompt: str) -> str:
+        errors = []
+        for model in models:
+            try:
+                return await self.__run_agent_as_binary_transformer(binary_message, model.name, system_prompt)
+            except Exception as e:
+                logger.error(f"Error running binary transformer with model {model.name}: {e}")
+                errors.append((model.name, str(e)))
+                continue
+        errors_str = "\n".join([f"\nModel: {model},\nError: {error}" for model, error in errors])
+        raise ValueError(f"After all fallback attempts, the binary transformer failed: Errors: {errors_str}")
+    
+    async def __audio_to_text(self, binary_message, models: List[Model]) -> str:
         system = """
         You will act as ASR.
         You will be given an audio file and you will need to transcribe it to text.
@@ -145,9 +177,9 @@ class LivellmProxy:
         [text of the transcription]
         </audio_transcription>
         """
-        return await self.__run_agent_as_binary_transformer(binary_message, model, system, creds)
+        return await self.__run_binary_transformer_with_fallback(binary_message, models, system)
 
-    async def __image_to_text(self, binary_message, model: str, creds: Creds) -> str:
+    async def __image_to_text(self, binary_message, models: List[Model]) -> str:
         system = """
         You will act as OCR.
         You will be given an image file and you will need to fully describe the image in detail.
@@ -158,9 +190,9 @@ class LivellmProxy:
         [description of the image]
         </image_description>
         """
-        return await self.__run_agent_as_binary_transformer(binary_message, model, system, creds)
+        return await self.__run_binary_transformer_with_fallback(binary_message, models, system)
     
-    async def __video_to_text(self, binary_message, model: str, creds: Creds) -> str:
+    async def __video_to_text(self, binary_message, models: List[Model]) -> str:
         system = """
         You will act as VSR.
         You will be given a video file and you will need to fully describe the video in detail.
@@ -171,19 +203,22 @@ class LivellmProxy:
         [description of the video]
         </video_description>
         """
-        return await self.__run_agent_as_binary_transformer(binary_message, model, system, creds)
+        return await self.__run_binary_transformer_with_fallback(binary_message, models, system)
     
 
 
-    async def __find_model_with_capability(self, capability: ModelCapability) -> Tuple[Model, Creds]:
+    async def __find_models_with_capability(self, capability: ModelCapability) -> List[Model]:
         """
-        Find a model with the specified capability.
+        Find all models with the specified capability.
         """
+        models = []
         for provider in self.providers:
             for provided_model in provider.models:
                 if capability in provided_model.capabilities:
-                    return provided_model, provider.creds
-        raise ValueError(f"No model with capability {capability} found")
+                    models.append(provided_model)
+        if not models:
+            raise ValueError(f"No model with capability {capability} found")
+        return models
 
     async def __binary_to_text(self, binary_message: BinaryMessage, primary_model: Model) -> str:
         """
@@ -191,23 +226,23 @@ class LivellmProxy:
         """
         # use mime_type to determine the type of the binary message
         if "image" in binary_message.mime_type:
+            models = []
             if ModelCapability.IMAGE_AGENT in primary_model.capabilities:
-                model, creds = primary_model, self.primary_creds
-            else:
-                model, creds = await self.__find_model_with_capability(ModelCapability.IMAGE_AGENT)
-            return await self.__image_to_text(binary_message, model.name, creds)
+                models.append(primary_model)
+            models += await self.__find_models_with_capability(ModelCapability.IMAGE_AGENT)
+            return await self.__image_to_text(binary_message, models)
         elif "video" in binary_message.mime_type:
+            models = []
             if ModelCapability.VIDEO_AGENT in primary_model.capabilities:
-                model, creds = primary_model, self.primary_creds
-            else:
-                model, creds = await self.__find_model_with_capability(ModelCapability.VIDEO_AGENT)
-            return await self.__video_to_text(binary_message, model.name, creds)
+                models.append(primary_model)
+            models += await self.__find_models_with_capability(ModelCapability.VIDEO_AGENT)
+            return await self.__video_to_text(binary_message, models)
         elif "audio" in binary_message.mime_type:
+            models = []
             if ModelCapability.AUDIO_AGENT in primary_model.capabilities:
-                model, creds = primary_model, self.primary_creds
-            else:
-                model, creds = await self.__find_model_with_capability(ModelCapability.AUDIO_AGENT)
-            return await self.__audio_to_text(binary_message, model.name, creds)
+                models.append(primary_model)
+            models += await self.__find_models_with_capability(ModelCapability.AUDIO_AGENT)
+            return await self.__audio_to_text(binary_message, models)
         else:
             raise ValueError(f"Unsupported mime type: {binary_message.mime_type}")
         
@@ -225,7 +260,7 @@ class LivellmProxy:
         return __messages
 
     
-    async def __required_capabilities(self, messages: List[Union[TextMessage, BinaryMessage]]) -> List[ModelCapability]:
+    def __required_capabilities(self, messages: List[Union[TextMessage, BinaryMessage]]) -> List[ModelCapability]:
         """
         Find the required capabilities for the messages.
         """
@@ -246,8 +281,7 @@ class LivellmProxy:
         self,
         messages: List[Union[TextMessage, BinaryMessage]],
         model: str,
-        force_binary_transformation: bool = False,
-        model_capabilities: Optional[List[ModelCapability]] = None
+        force_binary_transformation: bool = False
     ) -> List[Union[TextMessage, BinaryMessage]]:
         """
         Preprocess messages to ensure they are compatible with the model.
@@ -256,17 +290,18 @@ class LivellmProxy:
             messages: List of messages to preprocess
             model: Model name
             force_binary_transformation: If True, always transform binary messages to text
-            model_capabilities: List of model capabilities (if not set, counts as no capabilities)
             
         Returns:
             Preprocessed messages (either original or transformed)
         """
-        model_obj = Model(name=model, capabilities=model_capabilities or [])
+        # Get model capabilities from the first provider that supports this model
+        model_capabilities = self.__get_model_capabilities(model)
+        model_obj = Model(name=model, capabilities=model_capabilities)
         
         if force_binary_transformation:
             return await self.__binaries_to_text(messages, model_obj)
         
-        required_capabilities = await self.__required_capabilities(messages)
+        required_capabilities = self.__required_capabilities(messages)
         if not all(capability in model_obj.capabilities for capability in required_capabilities):
             return await self.__binaries_to_text(messages, model_obj)
         
@@ -279,7 +314,6 @@ class LivellmProxy:
         messages: List[Union[TextMessage, BinaryMessage]],
         tools: List[Union[WebSearchInput, MCPStreamableServerInput]],
         force_binary_transformation: bool = False,
-        model_capabilities: Optional[List[ModelCapability]] = None,
         **gen_config
     ) -> Tuple[AgentResponse, List[Union[TextMessage, BinaryMessage]]]:
         """
@@ -289,10 +323,10 @@ class LivellmProxy:
         and then try the original message again.
         if you want to safe transformed messages
         if force_binary_transformation is True, the client will always transform all bindary messages to text messages.
-        if model capabilities are not set, it will count as no capabilities
+        Model capabilities are automatically discovered from the first provider that supports the model.
         """
         messages = await self.__preprocess_messages(
-            messages, model, force_binary_transformation, model_capabilities
+            messages, model, force_binary_transformation
         )
         
         agent_request = AgentRequest(
@@ -302,9 +336,7 @@ class LivellmProxy:
             gen_config=gen_config,
         )
 
-        response = await self.__agent_run_with_fallback(
-            agent_request, self.primary_creds
-        )
+        response = await self.__agent_run_with_fallback(agent_request)
         return response, messages
     
     async def agent_run_stream(
@@ -313,7 +345,6 @@ class LivellmProxy:
         messages: List[Union[TextMessage, BinaryMessage]],
         tools: List[Union[WebSearchInput, MCPStreamableServerInput]],
         force_binary_transformation: bool = False,
-        model_capabilities: Optional[List[ModelCapability]] = None,
         **gen_config
     ) -> Tuple[AsyncIterator[AgentResponse], List[Union[TextMessage, BinaryMessage]]]:
         """
@@ -323,10 +354,10 @@ class LivellmProxy:
         and then try the original message again.
         if you want to safe transformed messages
         if force_binary_transformation is True, the client will always transform all bindary messages to text messages.
-        if model capabilities are not set, it will count as no capabilities
+        Model capabilities are automatically discovered from the first provider that supports the model.
         """
         messages = await self.__preprocess_messages(
-            messages, model, force_binary_transformation, model_capabilities
+            messages, model, force_binary_transformation
         )
         
         agent_request = AgentRequest(
@@ -336,9 +367,7 @@ class LivellmProxy:
             gen_config=gen_config,
         )
 
-        response = self.__agent_run_stream_with_fallback(
-            agent_request, self.primary_creds
-        )
+        response = self.__agent_run_stream_with_fallback(agent_request)
         return response, messages
     
     async def audio_speak(
@@ -369,7 +398,7 @@ class LivellmProxy:
             output_format=output_format,
             gen_config=gen_config if gen_config else None,
         )
-        return await self.__audio_speak_with_fallback(request, self.primary_creds)
+        return await self.__audio_speak_with_fallback(request)
     
     async def audio_speak_stream(
         self,
@@ -399,7 +428,7 @@ class LivellmProxy:
             output_format=output_format,
             gen_config=gen_config if gen_config else None,
         )
-        async for chunk in self.__audio_speak_stream_with_fallback(request, self.primary_creds):
+        async for chunk in self.__audio_speak_stream_with_fallback(request):
             yield chunk
     
     async def audio_transcribe(
@@ -424,7 +453,6 @@ class LivellmProxy:
         return await self.__audio_transcribe_with_fallback(
             model=model,
             file=file,
-            primary_creds=self.primary_creds,
             language=language,
             gen_config=gen_config if gen_config else None
         )
