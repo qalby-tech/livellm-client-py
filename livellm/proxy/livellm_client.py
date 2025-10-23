@@ -26,7 +26,7 @@ logger.setLevel(logging.INFO)
 
 class LivellmProxy:
 
-    def __init__(self, base_url: str, primary_creds: Creds, providers: List[ProviderConfig]):
+    def __init__(self, base_url: str, primary_creds: Creds, providers: List[ProviderConfig], timeout: float = 30.0):
         """
         a list of creds is used to handle fallback
         fallback works like this:
@@ -37,7 +37,7 @@ class LivellmProxy:
         """
         self.primary_creds = primary_creds
         self.providers = providers
-        self.client = LivellmProxyClient(base_url=base_url)
+        self.client = LivellmProxyClient(base_url=base_url, timeout=timeout)
     
 
     async def __get_fallback_creds(self, model: str, primary_creds: Creds) -> List[Creds]:
@@ -50,6 +50,7 @@ class LivellmProxy:
     
     async def __run_with_fallback(self, executable: Callable[Creds, Any], model: str, primary_creds: Creds, stream: bool = False) -> Any:
         creds = await self.__get_fallback_creds(model, primary_creds)
+        errors = []
         for cred in creds:
             try:
                 if stream:
@@ -58,8 +59,10 @@ class LivellmProxy:
                     return await executable(cred)
             except Exception as e:
                 logger.error(f"Error running executable with creds {cred}: {e}")
+                errors.append((model, str(e)))
                 continue
-        raise ValueError(f"No model with name {model} found")
+        errors_str = "\n\n".join([f"Model: {model},\nError: {error}" for model, error in errors])
+        raise ValueError(f"After all fallback attempts, the executable failed: Errors: {errors_str}")
     
     async def __agent_run_with_fallback(self, request: AgentRequest, primary_creds: Creds) -> AgentResponse:
         def exec_agent(cred: Creds) -> Coroutine[Any, Any, AgentResponse]:
