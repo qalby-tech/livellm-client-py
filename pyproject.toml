@@ -15,8 +15,11 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
+    "Typing :: Typed",
 ]
 
 [project.urls]
@@ -29,6 +32,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["livellm"]
+include = [
+    "livellm/py.typed",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
