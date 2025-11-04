@@ -151,7 +151,8 @@ class LivellmClient:
         return SuccessResponse(success=True, message="Configs updated successfully")
     
     async def get_configs(self) -> List[Settings]:
-        return await self.get("providers/configs")
+        result = await self.get("providers/configs")
+        return [Settings(**config) for config in result]
     
     async def delete_config(self, config_uid: str) -> SuccessResponse:
         result = await self.delete(f"providers/config/{config_uid}")
@@ -186,7 +187,9 @@ class LivellmClient:
         self,
         request: Union[AgentRequest, AgentFallbackRequest]
     ) -> AsyncIterator[AgentResponse]:
-        return await self.post(request.model_dump(), "agent/run_stream", expect_stream=True, expect_json=True)
+        stream = await self.post(request.model_dump(), "agent/run_stream", expect_stream=True, expect_json=True)
+        async for chunk in stream:
+            yield AgentResponse(**chunk)
     
     async def speak(
         self,
