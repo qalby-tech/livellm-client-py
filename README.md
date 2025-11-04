@@ -1,453 +1,548 @@
-# LiveLLM Proxy Client
+# LiveLLM Python Client
 
-A Python client for the LiveLLM Proxy API with production features including automatic binary message transformation, multi-provider support, and comprehensive audio/text processing capabilities.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+Python client library for the LiveLLM Server - a unified proxy for AI agent, audio, and transcription services.
+
+## Features
+
+- 🚀 **Async-first design** - Built on httpx for high-performance async operations
+- 🔒 **Type-safe** - Full type hints and Pydantic validation
+- 🎯 **Multi-provider support** - OpenAI, Google, Anthropic, Groq, ElevenLabs
+- 🔄 **Streaming support** - Real-time streaming for agent and audio responses
+- 🛠️ **Agent tools** - Web search and MCP server integration
+- 🎙️ **Audio services** - Text-to-speech and transcription
+- ⚡ **Fallback strategies** - Sequential and parallel fallback handling
+- 📦 **Context manager support** - Automatic cleanup with async context managers
 
 ## Installation
 
-### Using uv (Recommended)
-
 ```bash
-# Install from Git repository
-uv add git+https://github.com/qalby-tech/livellm-client-py.git
-
-# Or install from local directory
-uv add .
+pip install livellm-client
 ```
 
-### Using pip
+Or with development dependencies:
 
 ```bash
-pip install git+https://github.com/qalby-tech/livellm-client-py.git
+pip install livellm-client[testing]
 ```
 
 ## Quick Start
 
 ```python
 import asyncio
-from livellm import LivellmProxy, Creds, TextMessage
-from livellm import create_openai_provider_config
+from livellm import LivellmClient
+from livellm.models import Settings, ProviderKind, AgentRequest, TextMessage, MessageRole
+from pydantic import SecretStr
 
 async def main():
-    # Initialize the proxy client
-    proxy = LivellmProxy(
-        base_url="http://localhost:8000",
-        providers=[
-            create_openai_provider_config("your-api-key", base_url="https://api.openai.com/v1"),
-        ]
-    )
-    
-    # Run a basic conversation
-    response, messages = await proxy.agent_run(
-        model="gpt-4o",
-        messages=[
-            TextMessage(role="user", content="Hello, how are you?"),
-        ],
-        tools=[],
-    )
-    
-    print(f"Response: {response.output}")
+    # Initialize the client with context manager for automatic cleanup
+    async with LivellmClient(base_url="http://localhost:8000") as client:
+        # Configure a provider
+        config = Settings(
+            uid="my-openai-config",
+            provider=ProviderKind.OPENAI,
+            api_key=SecretStr("your-api-key")
+        )
+        await client.update_config(config)
+        
+        # Run an agent query
+        request = AgentRequest(
+            provider_uid="my-openai-config",
+            model="gpt-4",
+            messages=[
+                TextMessage(role=MessageRole.USER, content="Hello, how are you?")
+            ],
+            tools=[]
+        )
+        
+        response = await client.agent_run(request)
+        print(response.output)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
 ```
-
-## Features
-
-- **Multi-Provider Support**: Configure multiple AI providers (OpenAI, Google, etc.)
-- **Automatic Binary Transformation**: Audio and image messages are automatically transcribed/described when models don't support them
-- **Streaming Support**: Real-time streaming for both text and audio generation
-- **Audio Processing**: Text-to-speech (TTS) and speech-to-text (STT) capabilities
-- **Production Ready**: Built with httpx and pydantic for reliability and type safety
-
-## Examples
-
-The `examples/` directory contains comprehensive examples for different use cases:
-
-### Basic Usage
-- [`basic_agent.py`](examples/basic_agent.py) - Simple text conversation
-- [`streaming_agent.py`](examples/streaming_agent.py) - Streaming text responses
-
-### Audio Processing
-- [`audio_tts.py`](examples/audio_tts.py) - Text-to-speech generation (regular and streaming)
-- [`audio_transcribe.py`](examples/audio_transcribe.py) - Audio transcription
-
-### Advanced Features
-- [`binary_messages.py`](examples/binary_messages.py) - Working with audio and image messages
-- [`raw_client.py`](examples/raw_client.py) - Direct API access
-- [`custom_provider_config.py`](examples/custom_provider_config.py) - Custom provider configurations
-- [`mcp_tools_example.py`](examples/mcp_tools_example.py) - Using MCP tools with agents
 
 ## Configuration
-
-### Provider Setup
-
-```python
-from livellm import create_openai_provider_config, create_google_provider_config
-
-# OpenAI provider
-openai_provider = create_openai_provider_config(
-    api_key="your-openai-key",
-    base_url="https://api.openai.com/v1"
-)
-
-# Google provider
-google_provider = create_google_provider_config(
-    api_key="your-google-key",
-    base_url="https://generativelanguage.googleapis.com"
-)
-```
 
 ### Client Initialization
 
 ```python
-from livellm import LivellmProxy, Creds
+from livellm import LivellmClient
 
-proxy = LivellmProxy(
-    base_url="http://localhost:8000",  # Your proxy server URL
-    providers=[
-        openai_provider,
-        google_provider,
-        # Add more providers as needed
-    ]
-)
-```
+# Basic initialization
+client = LivellmClient(base_url="http://localhost:8000")
 
-### Custom Provider Configurations
-
-The client supports custom provider configurations that allow you to define your own models, capabilities, and endpoints. This is particularly useful for:
-
-#### Why Use Custom Configurations?
-
-1. **Cost Optimization**: Only include models you actually use, reducing initialization overhead
-2. **Performance**: Faster startup times with fewer models to process
-3. **Self-Hosted Models**: Use custom base URLs for your own model deployments
-4. **Capability Matching**: Define exactly which models support which features
-5. **Fallback Reliability**: Automatic failover between providers when models are unavailable
-
-#### How It Works
-
-The client uses a fallback system that:
-- Tries the primary provider first
-- Automatically falls back to alternative providers if the model fails or doesn't support the input
-- Transforms binary messages (audio/images) when models don't support them natively
-- Heuristically checks model capabilities before making requests
-
-#### Creating Custom Configurations
-
-```python
-from livellm import ProviderConfig, Creds, Model, ModelCapability
-
-def create_custom_provider_config(api_key: str, base_url: str):
-    """Create a custom provider configuration."""
-    return ProviderConfig(
-        creds=Creds(
-            api_key=api_key,
-            provider="custom",  # Your provider name
-            base_url=base_url
-        ),
-        models=[
-            # Define only the models you need
-            Model(
-                name="my-custom-model",
-                capabilities=[ModelCapability.IMAGE_AGENT]  # Supports images
-            ),
-            Model(
-                name="my-text-model",
-                capabilities=[]  # Text-only model
-            ),
-        ]
-    )
-
-# Use in your client
-proxy = LivellmProxy(
+# With timeout
+client = LivellmClient(
     base_url="http://localhost:8000",
-    providers=[
-        create_custom_provider_config("custom-key", "http://localhost:11434"),
-        # Other providers...
-    ]
+    timeout=30.0
+)
+
+# With pre-configured providers (sync operation)
+from livellm.models import Settings, ProviderKind
+from pydantic import SecretStr
+
+configs = [
+    Settings(
+        uid="openai-config",
+        provider=ProviderKind.OPENAI,
+        api_key=SecretStr("sk-..."),
+        base_url="https://api.openai.com/v1"  # Optional custom base URL
+    ),
+    Settings(
+        uid="anthropic-config",
+        provider=ProviderKind.ANTHROPIC,
+        api_key=SecretStr("sk-ant-..."),
+        blacklist_models=["claude-instant-1"]  # Optional model blacklist
+    )
+]
+
+client = LivellmClient(
+    base_url="http://localhost:8000",
+    configs=configs
 )
 ```
 
-#### Model Capabilities
+### Provider Configuration
 
-Define what each model can handle:
+Supported providers:
+- `OPENAI` - OpenAI GPT models
+- `GOOGLE` - Google Gemini models
+- `ANTHROPIC` - Anthropic Claude models
+- `GROQ` - Groq models
+- `ELEVENLABS` - ElevenLabs text-to-speech
 
 ```python
-from livellm import ModelCapability
+# Add a provider configuration
+config = Settings(
+    uid="unique-provider-id",
+    provider=ProviderKind.OPENAI,
+    api_key=SecretStr("your-api-key"),
+    base_url="https://custom-endpoint.com",  # Optional
+    blacklist_models=["deprecated-model"]     # Optional
+)
+await client.update_config(config)
 
-# Available capabilities:
-ModelCapability.AUDIO_AGENT    # Can process audio messages
-ModelCapability.IMAGE_AGENT    # Can process image messages  
-ModelCapability.VIDEO_AGENT    # Can process video messages
-ModelCapability.SPEAK          # Can generate speech (TTS)
-ModelCapability.TRANSCRIBE     # Can transcribe audio (STT)
+# Get all configurations
+configs = await client.get_configs()
+
+# Delete a configuration
+await client.delete_config("unique-provider-id")
 ```
 
-#### Self-Hosted Models
+## Usage Examples
 
-Use custom configurations for self-hosted models:
+### Agent Services
 
-```python
-def create_self_hosted_config(api_key: str, base_url: str):
-    """Configuration for self-hosted models."""
-    return ProviderConfig(
-        creds=Creds(
-            api_key=api_key,
-            provider="self-hosted",
-            base_url=base_url  # Your model server URL
-        ),
-        models=[
-            Model(
-                name="llama-3.1-8b",
-                capabilities=[]  # Text-only
-            ),
-            Model(
-                name="llava-1.6-7b", 
-                capabilities=[ModelCapability.IMAGE_AGENT]
-            ),
-        ]
-    )
-```
-
-#### Fallback Behavior Example
+#### Basic Agent Run
 
 ```python
-# The client will automatically try different providers
-response, messages = await proxy.agent_run(
-    model="gpt-4o-mini",  # Try this model first
+from livellm.models import AgentRequest, TextMessage, MessageRole
+
+request = AgentRequest(
+    provider_uid="my-openai-config",
+    model="gpt-4",
     messages=[
-        TextMessage(role="user", content="Hello!")
+        TextMessage(role=MessageRole.SYSTEM, content="You are a helpful assistant."),
+        TextMessage(role=MessageRole.USER, content="Explain quantum computing")
     ],
     tools=[],
+    gen_config={"temperature": 0.7, "max_tokens": 500}
 )
-# If gpt-4o-mini fails, it will try other providers with the same model
-# If the model doesn't exist in other providers, it will try similar models
+
+response = await client.agent_run(request)
+print(f"Output: {response.output}")
+print(f"Tokens used - Input: {response.usage.input_tokens}, Output: {response.usage.output_tokens}")
 ```
 
-For a complete example, see [`custom_provider_config.py`](examples/custom_provider_config.py).
-
-### MCP Tools Integration
-
-The client supports MCP (Model Context Protocol) tools, allowing agents to interact with external services and resources through streamable servers.
-
-#### What are MCP Tools?
-
-MCP tools enable agents to:
-- **File System Operations**: Read, write, and manage files
-- **Database Queries**: Execute database operations and queries
-- **API Integrations**: Connect to external APIs and services
-- **Custom Business Logic**: Implement domain-specific functionality
-- **Real-time Data Access**: Access live data sources and streams
-
-#### Using MCP Tools
+#### Streaming Agent Response
 
 ```python
-from livellm import MCPStreamableServerInput, WebSearchInput
-
-# Create MCP tool configuration
-mcp_tool = MCPStreamableServerInput(
-    url="http://localhost:3000",  # Your MCP server URL
-    prefix="filesystem"  # Tool namespace/prefix
-)
-
-# Use with agent
-response, messages = await proxy.agent_run(
-    model="gpt-4o",
+request = AgentRequest(
+    provider_uid="my-openai-config",
+    model="gpt-4",
     messages=[
-        TextMessage(role="user", content="List files in the current directory")
+        TextMessage(role=MessageRole.USER, content="Tell me a story")
     ],
-    tools=[mcp_tool],
-)
-```
-
-#### Multiple Tools Example
-
-```python
-# Combine MCP tools with other tools
-mcp_tool = MCPStreamableServerInput(
-    url="http://localhost:3000",
-    prefix="database"
+    tools=[]
 )
 
-web_search_tool = WebSearchInput(
-    search_context_size="high"
-)
-
-response, messages = await proxy.agent_run(
-    model="gpt-4o",
-    messages=[
-        TextMessage(role="user", content="Search for AI news and save to database")
-    ],
-    tools=[mcp_tool, web_search_tool],
-)
-```
-
-#### Streaming with MCP Tools
-
-```python
-# MCP tools work with streaming responses
-stream, messages = await proxy.agent_run_stream(
-    model="gpt-4o",
-    messages=[
-        TextMessage(role="user", content="Process data using the API tool")
-    ],
-    tools=[MCPStreamableServerInput(url="http://localhost:3000", prefix="api")],
-)
-
+stream = await client.agent_run_stream(request)
 async for chunk in stream:
     print(chunk.output, end="", flush=True)
 ```
 
-#### Common MCP Tool Configurations
+#### Agent with Binary Messages
 
 ```python
-# File system operations
-filesystem_tool = MCPStreamableServerInput(
-    url="http://localhost:3001",
-    prefix="filesystem"
-)
+import base64
 
-# Database operations
-database_tool = MCPStreamableServerInput(
-    url="http://localhost:3002",
-    prefix="database"
-)
+# Read and encode image
+with open("image.jpg", "rb") as f:
+    image_data = base64.b64encode(f.read()).decode("utf-8")
 
-```
+from livellm.models import BinaryMessage
 
-#### Benefits of MCP Tools
-
-1. **Extensibility**: Add custom functionality to your agents
-2. **Real-time Data**: Connect to live data sources and APIs
-3. **Modularity**: Separate tool logic from agent logic
-4. **Streaming Support**: Handle long-running operations efficiently
-5. **Security**: Controlled access to resources with audit trails
-
-For a complete example with multiple use cases, see [`mcp_tools_example.py`](examples/mcp_tools_example.py).
-
-## API Reference
-
-### Core Methods
-
-#### `agent_run(model, messages, tools, **kwargs)`
-Run a conversation with the specified model.
-
-**Parameters:**
-- `model` (str): Model identifier (e.g., "gpt-4o", "claude-3")
-- `messages` (List[Message]): List of conversation messages
-- `tools` (List[Union[WebSearchInput, MCPStreamableServerInput]]): List of available tools
-- `force_binary_transformation` (bool, optional): Force transformation of binary messages
-
-**Returns:**
-- `response`: Agent response with output and usage information
-- `messages`: Processed message list
-
-#### `agent_run_stream(model, messages, tools, **kwargs)`
-Run a streaming conversation.
-
-**Parameters:**
-- `model` (str): Model identifier (e.g., "gpt-4o", "claude-3")
-- `messages` (List[Message]): List of conversation messages
-- `tools` (List[Union[WebSearchInput, MCPStreamableServerInput]]): List of available tools
-- `force_binary_transformation` (bool, optional): Force transformation of binary messages
-
-**Returns:**
-- `stream`: Async generator of response chunks
-- `messages`: Processed message list
-
-#### `audio_speak(model, text, voice, output_format, **kwargs)`
-Generate speech from text.
-
-**Parameters:**
-- `model` (str): TTS model (e.g., "tts-1")
-- `text` (str): Text to convert to speech
-- `voice` (str): Voice identifier (e.g., "alloy", "nova")
-- `output_format` (str): Output format ("mp3", "wav", etc.)
-
-**Returns:**
-- `bytes`: Audio data
-
-#### `audio_speak_stream(model, text, voice, output_format, **kwargs)`
-Generate streaming speech from text.
-
-**Returns:**
-- `AsyncGenerator[bytes]`: Streaming audio chunks
-
-#### `audio_transcribe(model, file, language=None, **kwargs)`
-Transcribe audio to text.
-
-**Parameters:**
-- `model` (str): STT model (e.g., "whisper-1")
-- `file` (tuple): File tuple (filename, bytes, mime_type)
-- `language` (str, optional): Language hint
-
-**Returns:**
-- `TranscriptionResponse`: Transcription result with text and language
-
-### Message Types
-
-#### `TextMessage`
-```python
-TextMessage(role="user", content="Hello, world!")
-```
-
-#### `BinaryMessage`
-```python
-# From bytes
-BinaryMessage.from_bytes(
-    content=audio_bytes,
-    mime_type="audio/wav",
-    caption="Audio description"
-)
-
-```
-
-## Binary Message Transformation
-
-The client automatically handles binary messages (audio, images) when the target model doesn't support them:
-
-1. **Audio messages** are automatically transcribed to text using the configured STT model
-2. **Image messages** are automatically described using vision models
-3. **Force transformation** can be enabled with `force_binary_transformation=True`
-
-```python
-# Audio will be automatically transcribed if model doesn't support audio
-response, messages = await proxy.agent_run(
-    model="gpt-4o",  # Doesn't support audio
+request = AgentRequest(
+    provider_uid="my-openai-config",
+    model="gpt-4-vision",
     messages=[
-        BinaryMessage.from_bytes(audio_bytes, "audio/wav", "What's in this audio?")
+        BinaryMessage(
+            role=MessageRole.USER,
+            content=image_data,
+            mime_type="image/jpeg",
+            caption="What's in this image?"
+        )
     ],
     tools=[]
 )
+
+response = await client.agent_run(request)
 ```
+
+#### Agent with Web Search Tool
+
+```python
+from livellm.models import WebSearchInput, ToolKind
+
+request = AgentRequest(
+    provider_uid="my-openai-config",
+    model="gpt-4",
+    messages=[
+        TextMessage(role=MessageRole.USER, content="What's the latest news about AI?")
+    ],
+    tools=[
+        WebSearchInput(
+            kind=ToolKind.WEB_SEARCH,
+            search_context_size="high"  # Options: "low", "medium", "high"
+        )
+    ]
+)
+
+response = await client.agent_run(request)
+```
+
+#### Agent with MCP Server Tool
+
+```python
+from livellm.models import MCPStreamableServerInput, ToolKind
+
+request = AgentRequest(
+    provider_uid="my-openai-config",
+    model="gpt-4",
+    messages=[
+        TextMessage(role=MessageRole.USER, content="Execute tool")
+    ],
+    tools=[
+        MCPStreamableServerInput(
+            kind=ToolKind.MCP_STREAMABLE_SERVER,
+            url="http://mcp-server:8080",
+            prefix="mcp_",
+            timeout=15,
+            kwargs={"custom_param": "value"}
+        )
+    ]
+)
+
+response = await client.agent_run(request)
+```
+
+### Audio Services
+
+#### Text-to-Speech
+
+```python
+from livellm.models import SpeakRequest, SpeakMimeType
+
+request = SpeakRequest(
+    provider_uid="elevenlabs-config",
+    model="eleven_turbo_v2",
+    text="Hello, this is a test of text to speech.",
+    voice="rachel",
+    mime_type=SpeakMimeType.MP3,
+    sample_rate=44100,
+    gen_config={"stability": 0.5, "similarity_boost": 0.75}
+)
+
+# Get audio as bytes
+audio_bytes = await client.speak(request)
+with open("output.mp3", "wb") as f:
+    f.write(audio_bytes)
+```
+
+#### Streaming Text-to-Speech
+
+```python
+request = SpeakRequest(
+    provider_uid="elevenlabs-config",
+    model="eleven_turbo_v2",
+    text="This is a longer text that will be streamed.",
+    voice="rachel",
+    mime_type=SpeakMimeType.MP3,
+    sample_rate=44100,
+    chunk_size=20  # Chunk size in milliseconds
+)
+
+# Stream audio chunks
+stream = await client.speak_stream(request)
+with open("output.mp3", "wb") as f:
+    async for chunk in stream:
+        f.write(chunk)
+```
+
+#### Audio Transcription (Multipart)
+
+```python
+# Using multipart upload
+with open("audio.mp3", "rb") as f:
+    file_tuple = ("audio.mp3", f.read(), "audio/mpeg")
+
+response = await client.transcribe(
+    provider_uid="openai-config",
+    file=file_tuple,
+    model="whisper-1",
+    language="en",
+    gen_config={"temperature": 0.2}
+)
+
+print(f"Transcription: {response.text}")
+print(f"Detected language: {response.language}")
+```
+
+#### Audio Transcription (JSON)
+
+```python
+import base64
+from livellm.models import TranscribeRequest
+
+with open("audio.mp3", "rb") as f:
+    audio_data = base64.b64encode(f.read()).decode("utf-8")
+
+request = TranscribeRequest(
+    provider_uid="openai-config",
+    model="whisper-1",
+    file=("audio.mp3", audio_data, "audio/mpeg"),
+    language="en"
+)
+
+response = await client.transcribe_json(request)
+```
+
+### Fallback Strategies
+
+#### Sequential Fallback (Try each provider in order)
+
+```python
+from livellm.models import AgentFallbackRequest, FallbackStrategy
+
+fallback_request = AgentFallbackRequest(
+    requests=[
+        AgentRequest(
+            provider_uid="primary-provider",
+            model="gpt-4",
+            messages=[TextMessage(role=MessageRole.USER, content="Hello")],
+            tools=[]
+        ),
+        AgentRequest(
+            provider_uid="backup-provider",
+            model="claude-3",
+            messages=[TextMessage(role=MessageRole.USER, content="Hello")],
+            tools=[]
+        )
+    ],
+    strategy=FallbackStrategy.SEQUENTIAL,
+    timeout_per_request=30
+)
+
+response = await client.agent_run(fallback_request)
+```
+
+#### Parallel Fallback (Try all providers simultaneously)
+
+```python
+fallback_request = AgentFallbackRequest(
+    requests=[
+        AgentRequest(provider_uid="provider-1", model="gpt-4", messages=messages, tools=[]),
+        AgentRequest(provider_uid="provider-2", model="claude-3", messages=messages, tools=[]),
+        AgentRequest(provider_uid="provider-3", model="gemini-pro", messages=messages, tools=[])
+    ],
+    strategy=FallbackStrategy.PARALLEL,
+    timeout_per_request=10
+)
+
+response = await client.agent_run(fallback_request)
+```
+
+#### Audio Fallback
+
+```python
+from livellm.models import AudioFallbackRequest
+
+fallback_request = AudioFallbackRequest(
+    requests=[
+        SpeakRequest(provider_uid="elevenlabs", model="model-1", text=text, voice="voice1", 
+                     mime_type=SpeakMimeType.MP3, sample_rate=44100),
+        SpeakRequest(provider_uid="openai", model="tts-1", text=text, voice="alloy",
+                     mime_type=SpeakMimeType.MP3, sample_rate=44100)
+    ],
+    strategy=FallbackStrategy.SEQUENTIAL
+)
+
+audio = await client.speak(fallback_request)
+```
+
+## Context Manager Support
+
+The client supports async context managers for automatic cleanup:
+
+```python
+async with LivellmClient(base_url="http://localhost:8000") as client:
+    config = Settings(uid="temp-config", provider=ProviderKind.OPENAI, 
+                      api_key=SecretStr("key"))
+    await client.update_config(config)
+    
+    # Use client...
+    response = await client.ping()
+    
+# Automatically cleans up configs and closes HTTP client
+```
+
+Or manually:
+
+```python
+client = LivellmClient(base_url="http://localhost:8000")
+try:
+    # Use client...
+    pass
+finally:
+    await client.cleanup()
+```
+
+## API Reference
+
+### Client Methods
+
+#### Health Check
+- `ping() -> SuccessResponse` - Check server health
+
+#### Configuration Management
+- `update_config(config: Settings) -> SuccessResponse` - Add/update a provider config
+- `update_configs(configs: List[Settings]) -> SuccessResponse` - Add/update multiple configs
+- `get_configs() -> List[Settings]` - Get all provider configurations
+- `delete_config(config_uid: str) -> SuccessResponse` - Delete a provider config
+
+#### Agent Services
+- `agent_run(request: AgentRequest | AgentFallbackRequest) -> AgentResponse` - Run agent query
+- `agent_run_stream(request: AgentRequest | AgentFallbackRequest) -> AsyncIterator[AgentResponse]` - Stream agent response
+
+#### Audio Services
+- `speak(request: SpeakRequest | AudioFallbackRequest) -> bytes` - Text-to-speech
+- `speak_stream(request: SpeakRequest | AudioFallbackRequest) -> AsyncIterator[bytes]` - Streaming TTS
+- `transcribe(provider_uid, file, model, language?, gen_config?) -> TranscribeResponse` - Multipart transcription
+- `transcribe_json(request: TranscribeRequest | TranscribeFallbackRequest) -> TranscribeResponse` - JSON transcription
+
+#### Cleanup
+- `cleanup() -> None` - Clean up resources and close client
+- `__aenter__() / __aexit__()` - Async context manager support
+
+### Models
+
+#### Common Models
+- `Settings` - Provider configuration
+- `ProviderKind` - Enum of supported providers
+- `SuccessResponse` - Generic success response
+- `BaseRequest` - Base class for all requests
+
+#### Agent Models
+- `AgentRequest` - Agent query request
+- `AgentResponse` - Agent query response
+- `AgentResponseUsage` - Token usage information
+- `TextMessage` - Text-based message
+- `BinaryMessage` - Binary message (images, audio, etc.)
+- `MessageRole` - Enum: USER, MODEL, SYSTEM
+
+#### Tool Models
+- `ToolKind` - Enum: WEB_SEARCH, MCP_STREAMABLE_SERVER
+- `WebSearchInput` - Web search tool configuration
+- `MCPStreamableServerInput` - MCP server tool configuration
+
+#### Audio Models
+- `SpeakRequest` - Text-to-speech request
+- `SpeakMimeType` - Enum: PCM, WAV, MP3, ULAW, ALAW
+- `TranscribeRequest` - Transcription request
+- `TranscribeResponse` - Transcription response
+
+#### Fallback Models
+- `FallbackStrategy` - Enum: SEQUENTIAL, PARALLEL
+- `AgentFallbackRequest` - Agent fallback configuration
+- `AudioFallbackRequest` - Audio fallback configuration
+- `TranscribeFallbackRequest` - Transcription fallback configuration
 
 ## Error Handling
 
-The client includes comprehensive error handling with detailed error messages:
+The client raises exceptions for HTTP errors:
 
 ```python
-from livellm import ValidationError, HTTPValidationError
+try:
+    response = await client.agent_run(request)
+except Exception as e:
+    print(f"Error: {e}")
+```
+
+For more granular error handling:
+
+```python
+import httpx
 
 try:
-    response, messages = await proxy.agent_run(...)
-except (ValidationError, HTTPValidationError) as e:
-    print(f"Error: {e}")
+    response = await client.ping()
+except httpx.HTTPStatusError as e:
+    print(f"HTTP error: {e.response.status_code}")
+except httpx.RequestError as e:
+    print(f"Request error: {e}")
+```
+
+## Development
+
+### Running Tests
+
+```bash
+# Install development dependencies
+pip install -e ".[testing]"
+
+# Run tests
+pytest tests/
+```
+
+### Type Checking
+
+The library is fully typed. Run type checking with:
+
+```bash
+pip install mypy
+mypy livellm
 ```
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.10+
 - httpx >= 0.27.0
 - pydantic >= 2.0.0
 
 ## License
 
-MIT License
+MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## Support
+## Links
 
-For issues and questions, please open an issue on the GitHub repository.
+- [GitHub Repository](https://github.com/qalby-tech/livellm-client-py)
+- [Issue Tracker](https://github.com/qalby-tech/livellm-client-py/issues)
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for version history and changes.

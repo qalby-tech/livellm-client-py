@@ -1,7 +1,7 @@
 [project]
 name = "livellm-client"
-version = "0.1.5"
-description = "Python client for the LiveLLM Servers e.g. Proxy, Realtime"
+version = "1.1.0"
+description = "Python client for the LiveLLM Server"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -20,6 +20,13 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
     "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+testing = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0"
 ]
 
 [project.urls]
@@ -41,4 +48,32 @@ include = [
     "/livellm",
     "/README.md",
     "/pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+markers = [
+]
+addopts = [
+    "--strict-markers",
+    "--tb=short",
+]
+
+[tool.coverage.run]
+source = ["livellm"]
+omit = ["*/tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
 ]
