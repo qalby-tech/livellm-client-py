@@ -321,14 +321,14 @@ class TestAgentServices:
             tools=[],
         )
 
-        stream = await client.agent_run_stream(request)
+        stream = client.agent_run_stream(request)
         chunks = []
         async for chunk in stream:
             chunks.append(chunk)
 
         assert len(chunks) == 2
-        assert chunks[0]["output"] == "Hello "
-        assert chunks[1]["output"] == "World!"
+        assert chunks[0].output == "Hello "
+        assert chunks[1].output == "World!"
 
 
 class TestAudioServices:
