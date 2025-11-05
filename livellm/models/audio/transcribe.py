@@ -30,17 +30,16 @@ class TranscribeRequest(BaseRequest):
         
         # If content is already bytes, return as-is
         if isinstance(content, bytes):
-            return (filename, content, content_type)
+            try:
+                encoded_content = base64.b64encode(content).decode("utf-8") # base64 encode the content
+                return (filename, encoded_content, content_type)
+            except Exception as e:
+                raise ValueError(f"Failed to encode base64 content: {str(e)}")
         
         # If content is a string, assume it's base64 encoded
         elif isinstance(content, str):
-            try:
-                decoded_content = base64.b64decode(content)
-                return (filename, decoded_content, content_type)
-            except Exception as e:
-                raise ValueError(f"Failed to decode base64 content: {str(e)}")
-        else:
-            raise ValueError(f"file content must be either bytes or base64 string, got {type(content)}")
+            # assume it's already base64 encoded
+            return (filename, content, content_type)
 
 
 class TranscribeResponse(BaseModel):

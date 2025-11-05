@@ -3,7 +3,7 @@ import asyncio
 import httpx
 import json
 import warnings
-from typing import List, Optional, AsyncIterator, Union
+from typing import List, Optional, AsyncIterator, Union, overload
 from .models.common import Settings, SuccessResponse
 from .models.agent.agent import AgentRequest, AgentResponse
 from .models.audio.speak import SpeakRequest
@@ -121,15 +121,16 @@ class LivellmClient:
             error_response = error_response.decode("utf-8")
             raise Exception(f"Failed to post to {endpoint}: {error_response}")
         if expect_stream:
-            async def stream_response() -> AsyncIterator[Union[dict, bytes]]:
+            async def json_stream_response() -> AsyncIterator[dict]:
                 async for chunk in response.aiter_lines():
-                    if expect_json:
-                        chunk = chunk.strip()
-                        if not chunk:
-                            continue
-                        yield json.loads(chunk)
-                    else:
-                        yield chunk
+                    chunk = chunk.strip()
+                    if not chunk:
+                        continue
+                    yield json.loads(chunk)
+            async def bytes_stream_response() -> AsyncIterator[bytes]:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            stream_response = json_stream_response if expect_json else bytes_stream_response
             return stream_response()
         else:
             if expect_json:
@@ -230,17 +231,82 @@ class LivellmClient:
         self,
         request: Union[SpeakRequest, AudioFallbackRequest]
     ) -> AsyncIterator[bytes]:
-        return await self.post(request.model_dump(), "audio/speak_stream", expect_stream=True, expect_json=False)
+        speak_stream = await self.post(request.model_dump(), "audio/speak_stream", expect_stream=True, expect_json=False)
+        async for chunk in speak_stream:
+            yield chunk
     
-
+    @overload
     async def transcribe(
         self,
+        request: Union[TranscribeRequest, TranscribeFallbackRequest],
+    ) -> TranscribeResponse:
+        ...
+    
+    @overload
+    async def transcribe(
+        self,
+        *,
         provider_uid: str,
         file: File,
         model: str,
         language: Optional[str] = None,
         gen_config: Optional[dict] = None
     ) -> TranscribeResponse:
+        ...
+        
+    async def transcribe(
+        self,
+        request: Optional[Union[TranscribeRequest, TranscribeFallbackRequest]] = None,
+        *,
+        provider_uid: Optional[str] = None,
+        file: Optional[File] = None,
+        model: Optional[str] = None,
+        language: Optional[str] = None,
+        gen_config: Optional[dict] = None
+    ) -> TranscribeResponse:
+        """
+        Transcribe audio to text.
+        
+        Can be called in two ways:
+        
+        1. With a request object:
+           await client.transcribe(TranscribeRequest(...))
+           
+        2. With individual parameters (keyword arguments):
+           await client.transcribe(
+               provider_uid="...",
+               file=("filename", audio_bytes, "audio/wav"),
+               model="whisper-1"
+           )
+        
+        Args:
+            request: A TranscribeRequest or TranscribeFallbackRequest object
+            provider_uid: The provider UID string
+            file: The audio file as a tuple (filename, content, content_type)
+            model: The model to use for transcription
+            language: Optional language code
+            gen_config: Optional generation configuration
+            
+        Returns:
+            TranscribeResponse with transcription text and detected language
+        """
+        # Check if first argument is a request object
+        if request is not None:
+            if not isinstance(request, (TranscribeRequest, TranscribeFallbackRequest)):
+                raise TypeError(
+                    f"First positional argument must be TranscribeRequest or TranscribeFallbackRequest, got {type(request)}"
+                )
+            # JSON-based request
+            result = await self.post(request.model_dump(), "audio/transcribe_json", expect_json=True)
+            return TranscribeResponse(**result)
+        
+        # Otherwise, use keyword arguments with multipart form-data request
+        if provider_uid is None or file is None or model is None:
+            raise ValueError(
+                "provider_uid, file, and model are required. "
+                "Alternatively, pass a TranscribeRequest object as the first positional argument."
+            )
+        
         files = {
             "file": file
         }
@@ -251,13 +317,6 @@ class LivellmClient:
             "gen_config": json.dumps(gen_config) if gen_config else None
         }
         result = await self.post_multipart(files, data, "audio/transcribe")
-        return TranscribeResponse(**result)
-    
-    async def transcribe_json(
-        self,
-        request: Union[TranscribeRequest, TranscribeFallbackRequest]
-    ) -> TranscribeResponse:
-        result = await self.post(request.model_dump(), "audio/transcribe_json", expect_json=True)
         return TranscribeResponse(**result)
          
 
