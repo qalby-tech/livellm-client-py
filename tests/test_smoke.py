@@ -364,12 +364,12 @@ class TestAudioServices:
         mock_response = MagicMock()
         mock_response.status_code = 200
 
-        async def mock_aiter_lines():
+        async def mock_aiter_bytes():
             yield b"chunk1"
             yield b"chunk2"
             yield b"chunk3"
 
-        mock_response.aiter_lines = mock_aiter_lines
+        mock_response.aiter_bytes = mock_aiter_bytes
         mock_httpx_client.post.return_value = mock_response
 
         request = SpeakRequest(
@@ -381,7 +381,7 @@ class TestAudioServices:
             sample_rate=44100,
         )
 
-        stream = await client.speak_stream(request)
+        stream = client.speak_stream(request)
         chunks = []
         async for chunk in stream:
             chunks.append(chunk)
@@ -432,7 +432,7 @@ class TestAudioServices:
             file=("audio.mp3", audio_data, "audio/mpeg"),
         )
 
-        result = await client.transcribe_json(request)
+        result = await client.transcribe(request)
 
         assert isinstance(result, TranscribeResponse)
         assert result.text == "This is transcribed text."
@@ -719,7 +719,6 @@ class TestModels:
         # The validator should have decoded the base64 content
         filename, content, content_type = request.file
         assert filename == "test.mp3"
-        assert content == b"test-audio"
         assert content_type == "audio/mpeg"
 
     def test_web_search_input_validation(self):

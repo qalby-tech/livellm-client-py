@@ -7,15 +7,14 @@ Python client library for the LiveLLM Server - a unified proxy for AI agent, aud
 
 ## Features
 
-- 🚀 **Async-first design** - Built on httpx for high-performance async operations
+- 🚀 **Async-first** - Built on httpx for high-performance operations
 - 🔒 **Type-safe** - Full type hints and Pydantic validation
-- 🎯 **Multi-provider support** - OpenAI, Google, Anthropic, Groq, ElevenLabs
-- 🔄 **Streaming support** - Real-time streaming for agent and audio responses
-- 🛠️ **Agent tools** - Web search and MCP server integration
+- 🎯 **Multi-provider** - OpenAI, Google, Anthropic, Groq, ElevenLabs
+- 🔄 **Streaming** - Real-time streaming for agent and audio
+- 🛠️ **Flexible API** - Use request objects or keyword arguments
 - 🎙️ **Audio services** - Text-to-speech and transcription
-- ⚡ **Fallback strategies** - Sequential and parallel fallback handling
-- 📦 **Smart resource management** - Automatic cleanup via GC, context managers, or manual control
-- 🧹 **Memory safe** - No resource leaks with multiple cleanup strategies
+- ⚡ **Fallback strategies** - Sequential and parallel handling
+- 🧹 **Auto cleanup** - Context managers and garbage collection
 
 ## Installation
 
@@ -34,31 +33,27 @@ pip install livellm[testing]
 ```python
 import asyncio
 from livellm import LivellmClient
-from livellm.models import Settings, ProviderKind, AgentRequest, TextMessage, MessageRole
-from pydantic import SecretStr
+from livellm.models import Settings, ProviderKind, TextMessage, MessageRole
 
 async def main():
-    # Initialize the client with context manager for automatic cleanup
-    async with LivellmClient(base_url="http://localhost:8000") as client:
-        # Configure a provider
-        config = Settings(
-            uid="my-openai-config",
-            provider=ProviderKind.OPENAI,
-            api_key=SecretStr("your-api-key")
-        )
-        await client.update_config(config)
-        
-        # Run an agent query
-        request = AgentRequest(
-            provider_uid="my-openai-config",
+    # Initialize with automatic provider setup
+    async with LivellmClient(
+        base_url="http://localhost:8000",
+        configs=[
+            Settings(
+                uid="openai",
+                provider=ProviderKind.OPENAI,
+                api_key="your-api-key"
+            )
+        ]
+    ) as client:
+        # Simple keyword arguments style (gen_config as kwargs)
+        response = await client.agent_run(
+            provider_uid="openai",
             model="gpt-4",
-            messages=[
-                TextMessage(role=MessageRole.USER, content="Hello, how are you?")
-            ],
-            tools=[]
+            messages=[TextMessage(role="user", content="Hello!")],
+            temperature=0.7
         )
-        
-        response = await client.agent_run(request)
         print(response.output)
 
 asyncio.run(main())
@@ -70,195 +65,168 @@ asyncio.run(main())
 
 ```python
 from livellm import LivellmClient
+from livellm.models import Settings, ProviderKind
 
-# Basic initialization
+# Basic
 client = LivellmClient(base_url="http://localhost:8000")
 
-# With timeout
+# With timeout and pre-configured providers
 client = LivellmClient(
     base_url="http://localhost:8000",
-    timeout=30.0
-)
-
-# With pre-configured providers (sync operation)
-from livellm.models import Settings, ProviderKind
-from pydantic import SecretStr
-
-configs = [
-    Settings(
-        uid="openai-config",
-        provider=ProviderKind.OPENAI,
-        api_key=SecretStr("sk-..."),
-        base_url="https://api.openai.com/v1"  # Optional custom base URL
-    ),
-    Settings(
-        uid="anthropic-config",
-        provider=ProviderKind.ANTHROPIC,
-        api_key=SecretStr("sk-ant-..."),
-        blacklist_models=["claude-instant-1"]  # Optional model blacklist
-    )
-]
-
-client = LivellmClient(
-    base_url="http://localhost:8000",
-    configs=configs
+    timeout=30.0,
+    configs=[
+        Settings(
+            uid="openai",
+            provider=ProviderKind.OPENAI,
+            api_key="sk-...",
+            base_url="https://api.openai.com/v1"  # Optional
+        ),
+        Settings(
+            uid="anthropic",
+            provider=ProviderKind.ANTHROPIC,
+            api_key="sk-ant-...",
+            blacklist_models=["claude-instant-1"]  # Optional
+        )
+    ]
 )
 ```
 
-### Provider Configuration
+### Supported Providers
 
-Supported providers:
-- `OPENAI` - OpenAI GPT models
-- `GOOGLE` - Google Gemini models
-- `ANTHROPIC` - Anthropic Claude models
-- `GROQ` - Groq models
-- `ELEVENLABS` - ElevenLabs text-to-speech
+`OPENAI` • `GOOGLE` • `ANTHROPIC` • `GROQ` • `ELEVENLABS`
 
 ```python
-# Add a provider configuration
-config = Settings(
-    uid="unique-provider-id",
+# Add provider dynamically
+await client.update_config(Settings(
+    uid="my-provider",
     provider=ProviderKind.OPENAI,
-    api_key=SecretStr("your-api-key"),
-    base_url="https://custom-endpoint.com",  # Optional
-    blacklist_models=["deprecated-model"]     # Optional
-)
-await client.update_config(config)
+    api_key="your-api-key"
+))
 
-# Get all configurations
+# List and delete
 configs = await client.get_configs()
-
-# Delete a configuration
-await client.delete_config("unique-provider-id")
+await client.delete_config("my-provider")
 ```
 
 ## Usage Examples
 
 ### Agent Services
 
+#### Two Ways to Call Methods
+
+All methods support **two calling styles**:
+
+**Style 1: Keyword arguments** (kwargs become `gen_config`)
+```python
+response = await client.agent_run(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[TextMessage(role="user", content="Hello!")],
+    temperature=0.7,
+    max_tokens=500
+)
+```
+
+**Style 2: Request objects**
+```python
+from livellm.models import AgentRequest
+
+response = await client.agent_run(
+    AgentRequest(
+        provider_uid="openai",
+        model="gpt-4",
+        messages=[TextMessage(role="user", content="Hello!")],
+        gen_config={"temperature": 0.7, "max_tokens": 500}
+    )
+)
+```
+
 #### Basic Agent Run
 
 ```python
-from livellm.models import AgentRequest, TextMessage, MessageRole
+from livellm.models import TextMessage
 
-request = AgentRequest(
-    provider_uid="my-openai-config",
+# Using kwargs (recommended for simplicity)
+response = await client.agent_run(
+    provider_uid="openai",
     model="gpt-4",
     messages=[
-        TextMessage(role=MessageRole.SYSTEM, content="You are a helpful assistant."),
-        TextMessage(role=MessageRole.USER, content="Explain quantum computing")
+        TextMessage(role="system", content="You are helpful."),
+        TextMessage(role="user", content="Explain quantum computing")
     ],
-    tools=[],
-    gen_config={"temperature": 0.7, "max_tokens": 500}
+    temperature=0.7,
+    max_tokens=500
 )
-
-response = await client.agent_run(request)
 print(f"Output: {response.output}")
-print(f"Tokens used - Input: {response.usage.input_tokens}, Output: {response.usage.output_tokens}")
-```
-
-**Note:** You can use either `MessageRole` enum or string values for the `role` parameter:
-
-```python
-# Using enum (recommended for type safety)
-TextMessage(role=MessageRole.USER, content="Hello")
-
-# Using string (more convenient)
-TextMessage(role="user", content="Hello")
-
-# Both work identically and serialize correctly
+print(f"Tokens: {response.usage.input_tokens} in, {response.usage.output_tokens} out")
 ```
 
 #### Streaming Agent Response
 
 ```python
-request = AgentRequest(
-    provider_uid="my-openai-config",
+# Streaming also supports both styles
+stream = client.agent_run_stream(
+    provider_uid="openai",
     model="gpt-4",
-    messages=[
-        TextMessage(role=MessageRole.USER, content="Tell me a story")
-    ],
-    tools=[]
+    messages=[TextMessage(role="user", content="Tell me a story")],
+    temperature=0.8
 )
 
-stream = await client.agent_run_stream(request)
 async for chunk in stream:
     print(chunk.output, end="", flush=True)
 ```
 
-#### Agent with Binary Messages
+#### Agent with Vision (Binary Messages)
 
 ```python
 import base64
+from livellm.models import BinaryMessage
 
-# Read and encode image
 with open("image.jpg", "rb") as f:
     image_data = base64.b64encode(f.read()).decode("utf-8")
 
-from livellm.models import BinaryMessage
-
-request = AgentRequest(
-    provider_uid="my-openai-config",
+response = await client.agent_run(
+    provider_uid="openai",
     model="gpt-4-vision",
     messages=[
         BinaryMessage(
-            role=MessageRole.USER,
+            role="user",
             content=image_data,
             mime_type="image/jpeg",
             caption="What's in this image?"
         )
-    ],
-    tools=[]
-)
-
-response = await client.agent_run(request)
-```
-
-#### Agent with Web Search Tool
-
-```python
-from livellm.models import WebSearchInput, ToolKind
-
-request = AgentRequest(
-    provider_uid="my-openai-config",
-    model="gpt-4",
-    messages=[
-        TextMessage(role=MessageRole.USER, content="What's the latest news about AI?")
-    ],
-    tools=[
-        WebSearchInput(
-            kind=ToolKind.WEB_SEARCH,
-            search_context_size="high"  # Options: "low", "medium", "high"
-        )
     ]
 )
-
-response = await client.agent_run(request)
 ```
 
-#### Agent with MCP Server Tool
+#### Agent with Tools
 
 ```python
-from livellm.models import MCPStreamableServerInput, ToolKind
+from livellm.models import WebSearchInput, MCPStreamableServerInput, ToolKind
 
-request = AgentRequest(
-    provider_uid="my-openai-config",
+# Web search tool
+response = await client.agent_run(
+    provider_uid="openai",
     model="gpt-4",
-    messages=[
-        TextMessage(role=MessageRole.USER, content="Execute tool")
-    ],
-    tools=[
-        MCPStreamableServerInput(
-            kind=ToolKind.MCP_STREAMABLE_SERVER,
-            url="http://mcp-server:8080",
-            prefix="mcp_",
-            timeout=15,
-            kwargs={"custom_param": "value"}
-        )
-    ]
+    messages=[TextMessage(role="user", content="Latest AI news?")],
+    tools=[WebSearchInput(
+        kind=ToolKind.WEB_SEARCH,
+        search_context_size="high"  # low, medium, or high
+    )]
 )
 
-response = await client.agent_run(request)
+# MCP server tool
+response = await client.agent_run(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[TextMessage(role="user", content="Run custom tool")],
+    tools=[MCPStreamableServerInput(
+        kind=ToolKind.MCP_STREAMABLE_SERVER,
+        url="http://mcp-server:8080",
+        prefix="mcp_",
+        timeout=15
+    )]
+)
 ```
 
 ### Audio Services
@@ -266,313 +234,225 @@ response = await client.agent_run(request)
 #### Text-to-Speech
 
 ```python
-from livellm.models import SpeakRequest, SpeakMimeType
+from livellm.models import SpeakMimeType
 
-request = SpeakRequest(
-    provider_uid="elevenlabs-config",
-    model="eleven_turbo_v2",
-    text="Hello, this is a test of text to speech.",
-    voice="rachel",
+# Non-streaming
+audio = await client.speak(
+    provider_uid="openai",
+    model="tts-1",
+    text="Hello, world!",
+    voice="alloy",
     mime_type=SpeakMimeType.MP3,
-    sample_rate=44100,
-    gen_config={"stability": 0.5, "similarity_boost": 0.75}
+    sample_rate=24000,
+    speed=1.0  # kwargs become gen_config
 )
-
-# Get audio as bytes
-audio_bytes = await client.speak(request)
 with open("output.mp3", "wb") as f:
-    f.write(audio_bytes)
+    f.write(audio)
+
+# Streaming
+audio = bytes()
+async for chunk in client.speak_stream(
+    provider_uid="openai",
+    model="tts-1",
+    text="Hello, world!",
+    voice="alloy",
+    mime_type=SpeakMimeType.PCM,
+    sample_rate=24000
+):
+    audio += chunk
+
+# Save PCM as WAV
+import wave
+with wave.open("output.wav", "wb") as wf:
+    wf.setnchannels(1)
+    wf.setsampwidth(2)
+    wf.setframerate(24000)
+    wf.writeframes(audio)
 ```
 
-#### Streaming Text-to-Speech
+#### Transcription
 
 ```python
-request = SpeakRequest(
-    provider_uid="elevenlabs-config",
-    model="eleven_turbo_v2",
-    text="This is a longer text that will be streamed.",
-    voice="rachel",
-    mime_type=SpeakMimeType.MP3,
-    sample_rate=44100,
-    chunk_size=20  # Chunk size in milliseconds
-)
+# Method 1: Multipart upload (kwargs style)
+with open("audio.wav", "rb") as f:
+    audio_bytes = f.read()
 
-# Stream audio chunks
-stream = await client.speak_stream(request)
-with open("output.mp3", "wb") as f:
-    async for chunk in stream:
-        f.write(chunk)
-```
-
-#### Audio Transcription (Multipart)
-
-```python
-# Using multipart upload
-with open("audio.mp3", "rb") as f:
-    file_tuple = ("audio.mp3", f.read(), "audio/mpeg")
-
-response = await client.transcribe(
-    provider_uid="openai-config",
-    file=file_tuple,
+transcription = await client.transcribe(
+    provider_uid="openai",
+    file=("audio.wav", audio_bytes, "audio/wav"),
     model="whisper-1",
-    language="en",
-    gen_config={"temperature": 0.2}
+    language="en",  # Optional
+    temperature=0.0  # kwargs become gen_config
 )
+print(f"Text: {transcription.text}")
+print(f"Language: {transcription.language}")
 
-print(f"Transcription: {response.text}")
-print(f"Detected language: {response.language}")
-```
-
-#### Audio Transcription (JSON)
-
-```python
+# Method 2: JSON request object (base64-encoded)
 import base64
 from livellm.models import TranscribeRequest
 
-with open("audio.mp3", "rb") as f:
-    audio_data = base64.b64encode(f.read()).decode("utf-8")
-
-request = TranscribeRequest(
-    provider_uid="openai-config",
-    model="whisper-1",
-    file=("audio.mp3", audio_data, "audio/mpeg"),
-    language="en"
+audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+transcription = await client.transcribe(
+    TranscribeRequest(
+        provider_uid="openai",
+        file=("audio.wav", audio_b64, "audio/wav"),
+        model="whisper-1"
+    )
 )
-
-response = await client.transcribe_json(request)
 ```
 
 ### Fallback Strategies
 
-#### Sequential Fallback (Try each provider in order)
+Handle failures automatically with sequential or parallel fallback:
 
 ```python
-from livellm.models import AgentFallbackRequest, FallbackStrategy
+from livellm.models import AgentRequest, AgentFallbackRequest, FallbackStrategy, TextMessage
 
-fallback_request = AgentFallbackRequest(
-    requests=[
-        AgentRequest(
-            provider_uid="primary-provider",
-            model="gpt-4",
-            messages=[TextMessage(role=MessageRole.USER, content="Hello")],
-            tools=[]
-        ),
-        AgentRequest(
-            provider_uid="backup-provider",
-            model="claude-3",
-            messages=[TextMessage(role=MessageRole.USER, content="Hello")],
-            tools=[]
-        )
-    ],
-    strategy=FallbackStrategy.SEQUENTIAL,
-    timeout_per_request=30
+messages = [TextMessage(role="user", content="Hello!")]
+
+# Sequential: try each in order until one succeeds
+response = await client.agent_run(
+    AgentFallbackRequest(
+        strategy=FallbackStrategy.SEQUENTIAL,
+        requests=[
+            AgentRequest(provider_uid="primary", model="gpt-4", messages=messages, tools=[]),
+            AgentRequest(provider_uid="backup", model="claude-3", messages=messages, tools=[])
+        ],
+        timeout_per_request=30
+    )
 )
 
-response = await client.agent_run(fallback_request)
-```
-
-#### Parallel Fallback (Try all providers simultaneously)
-
-```python
-fallback_request = AgentFallbackRequest(
-    requests=[
-        AgentRequest(provider_uid="provider-1", model="gpt-4", messages=messages, tools=[]),
-        AgentRequest(provider_uid="provider-2", model="claude-3", messages=messages, tools=[]),
-        AgentRequest(provider_uid="provider-3", model="gemini-pro", messages=messages, tools=[])
-    ],
-    strategy=FallbackStrategy.PARALLEL,
-    timeout_per_request=10
+# Parallel: try all simultaneously, use first success
+response = await client.agent_run(
+    AgentFallbackRequest(
+        strategy=FallbackStrategy.PARALLEL,
+        requests=[
+            AgentRequest(provider_uid="p1", model="gpt-4", messages=messages, tools=[]),
+            AgentRequest(provider_uid="p2", model="claude-3", messages=messages, tools=[]),
+            AgentRequest(provider_uid="p3", model="gemini-pro", messages=messages, tools=[])
+        ],
+        timeout_per_request=10
+    )
 )
 
-response = await client.agent_run(fallback_request)
-```
+# Also works for audio
+from livellm.models import AudioFallbackRequest, SpeakRequest
 
-#### Audio Fallback
-
-```python
-from livellm.models import AudioFallbackRequest
-
-fallback_request = AudioFallbackRequest(
-    requests=[
-        SpeakRequest(provider_uid="elevenlabs", model="model-1", text=text, voice="voice1", 
-                     mime_type=SpeakMimeType.MP3, sample_rate=44100),
-        SpeakRequest(provider_uid="openai", model="tts-1", text=text, voice="alloy",
-                     mime_type=SpeakMimeType.MP3, sample_rate=44100)
-    ],
-    strategy=FallbackStrategy.SEQUENTIAL
+audio = await client.speak(
+    AudioFallbackRequest(
+        strategy=FallbackStrategy.SEQUENTIAL,
+        requests=[
+            SpeakRequest(provider_uid="elevenlabs", model="turbo", text="Hi", 
+                        voice="rachel", mime_type=SpeakMimeType.MP3, sample_rate=44100),
+            SpeakRequest(provider_uid="openai", model="tts-1", text="Hi",
+                        voice="alloy", mime_type=SpeakMimeType.MP3, sample_rate=44100)
+        ]
+    )
 )
-
-audio = await client.speak(fallback_request)
 ```
 
 ## Resource Management
 
-The client provides multiple ways to manage resources and cleanup:
-
-### 1. Automatic Cleanup (Garbage Collection)
-
-The client automatically cleans up when garbage collected:
+**Recommended**: Use context managers for automatic cleanup.
 
 ```python
-async def main():
-    client = LivellmClient(base_url="http://localhost:8000")
-    
-    # Use client...
-    response = await client.ping()
-    
-    # No explicit cleanup needed - handled automatically when object is destroyed
-    # Note: Provider configs are deleted synchronously from the server
-
-asyncio.run(main())
-```
-
-**Note**: While automatic cleanup works, it shows a `ResourceWarning` if configs exist to encourage explicit cleanup for immediate resource release.
-
-### 2. Context Manager (Recommended)
-
-Use async context managers for guaranteed cleanup:
-
-```python
+# ✅ Best: Context manager (auto cleanup)
 async with LivellmClient(base_url="http://localhost:8000") as client:
-    config = Settings(uid="temp-config", provider=ProviderKind.OPENAI, 
-                      api_key=SecretStr("key"))
-    await client.update_config(config)
-    
-    # Use client...
     response = await client.ping()
-    
-# Automatically cleans up configs and closes HTTP client
-```
+# Configs deleted, connection closed automatically
 
-### 3. Manual Cleanup
-
-Explicitly call cleanup in a try/finally block:
-
-```python
+# ✅ Good: Manual cleanup
 client = LivellmClient(base_url="http://localhost:8000")
 try:
-    # Use client...
     response = await client.ping()
 finally:
     await client.cleanup()
+
+# ⚠️ OK: Garbage collection (shows warning if configs exist)
+client = LivellmClient(base_url="http://localhost:8000")
+response = await client.ping()
+# Cleaned up when object is destroyed
 ```
-
-### Cleanup Behavior
-
-The `cleanup()` method:
-- Deletes all provider configs created by the client
-- Closes the HTTP client connection
-- Is idempotent (safe to call multiple times)
-
-The `__del__()` destructor (automatic cleanup):
-- Triggers when the object is garbage collected
-- Synchronously deletes provider configs from the server
-- Closes the HTTP client connection
-- Shows a `ResourceWarning` if configs exist (to encourage explicit cleanup)
 
 ## API Reference
 
 ### Client Methods
 
-#### Health Check
-- `ping() -> SuccessResponse` - Check server health
+**Configuration**
+- `ping()` - Health check
+- `update_config(config)` / `update_configs(configs)` - Add/update providers
+- `get_configs()` - List all configurations
+- `delete_config(uid)` - Remove provider
 
-#### Configuration Management
-- `update_config(config: Settings) -> SuccessResponse` - Add/update a provider config
-- `update_configs(configs: List[Settings]) -> SuccessResponse` - Add/update multiple configs
-- `get_configs() -> List[Settings]` - Get all provider configurations
-- `delete_config(config_uid: str) -> SuccessResponse` - Delete a provider config
+**Agent**
+- `agent_run(request | **kwargs)` - Run agent (blocking)
+- `agent_run_stream(request | **kwargs)` - Run agent (streaming)
 
-#### Agent Services
-- `agent_run(request: AgentRequest | AgentFallbackRequest) -> AgentResponse` - Run agent query
-- `agent_run_stream(request: AgentRequest | AgentFallbackRequest) -> AsyncIterator[AgentResponse]` - Stream agent response
+**Audio**
+- `speak(request | **kwargs)` - Text-to-speech (blocking)
+- `speak_stream(request | **kwargs)` - Text-to-speech (streaming)
+- `transcribe(request | **kwargs)` - Speech-to-text
 
-#### Audio Services
-- `speak(request: SpeakRequest | AudioFallbackRequest) -> bytes` - Text-to-speech
-- `speak_stream(request: SpeakRequest | AudioFallbackRequest) -> AsyncIterator[bytes]` - Streaming TTS
-- `transcribe(provider_uid, file, model, language?, gen_config?) -> TranscribeResponse` - Multipart transcription
-- `transcribe_json(request: TranscribeRequest | TranscribeFallbackRequest) -> TranscribeResponse` - JSON transcription
+**Cleanup**
+- `cleanup()` - Release resources
+- `async with client:` - Auto cleanup (recommended)
 
-#### Cleanup
-- `cleanup() -> None` - Clean up resources and close client (async)
-- `__aenter__() / __aexit__()` - Async context manager support
-- `__del__()` - Automatic cleanup when garbage collected (sync)
+### Key Models
 
-### Models
+**Core**
+- `Settings(uid, provider, api_key, base_url?, blacklist_models?)` - Provider config
+- `ProviderKind` - `OPENAI` | `GOOGLE` | `ANTHROPIC` | `GROQ` | `ELEVENLABS`
 
-#### Common Models
-- `Settings` - Provider configuration
-- `ProviderKind` - Enum of supported providers
-- `SuccessResponse` - Generic success response
-- `BaseRequest` - Base class for all requests
+**Messages**
+- `TextMessage(role, content)` - Text message
+- `BinaryMessage(role, content, mime_type, caption?)` - Image/audio message
+- `MessageRole` - `USER` | `MODEL` | `SYSTEM` (or use strings: `"user"`, `"model"`, `"system"`)
 
-#### Agent Models
-- `AgentRequest` - Agent query request
-- `AgentResponse` - Agent query response
-- `AgentResponseUsage` - Token usage information
-- `TextMessage` - Text-based message
-- `BinaryMessage` - Binary message (images, audio, etc.)
-- `MessageRole` - Enum: USER, MODEL, SYSTEM
+**Requests**
+- `AgentRequest(provider_uid, model, messages, tools?, gen_config?)`
+- `SpeakRequest(provider_uid, model, text, voice, mime_type, sample_rate, gen_config?)`
+- `TranscribeRequest(provider_uid, file, model, language?, gen_config?)`
 
-#### Tool Models
-- `ToolKind` - Enum: WEB_SEARCH, MCP_STREAMABLE_SERVER
-- `WebSearchInput` - Web search tool configuration
-- `MCPStreamableServerInput` - MCP server tool configuration
+**Tools**
+- `WebSearchInput(kind=ToolKind.WEB_SEARCH, search_context_size)`
+- `MCPStreamableServerInput(kind=ToolKind.MCP_STREAMABLE_SERVER, url, prefix?, timeout?)`
 
-#### Audio Models
-- `SpeakRequest` - Text-to-speech request
-- `SpeakMimeType` - Enum: PCM, WAV, MP3, ULAW, ALAW
-- `TranscribeRequest` - Transcription request
-- `TranscribeResponse` - Transcription response
+**Fallback**
+- `AgentFallbackRequest(strategy, requests, timeout_per_request?)`
+- `AudioFallbackRequest(strategy, requests, timeout_per_request?)`
+- `FallbackStrategy` - `SEQUENTIAL` | `PARALLEL`
 
-#### Fallback Models
-- `FallbackStrategy` - Enum: SEQUENTIAL, PARALLEL
-- `AgentFallbackRequest` - Agent fallback configuration
-- `AudioFallbackRequest` - Audio fallback configuration
-- `TranscribeFallbackRequest` - Transcription fallback configuration
+**Responses**
+- `AgentResponse(output, usage{input_tokens, output_tokens}, ...)`
+- `TranscribeResponse(text, language)`
 
 ## Error Handling
-
-The client raises exceptions for HTTP errors:
-
-```python
-try:
-    response = await client.agent_run(request)
-except Exception as e:
-    print(f"Error: {e}")
-```
-
-For more granular error handling:
 
 ```python
 import httpx
 
 try:
-    response = await client.ping()
+    response = await client.agent_run(
+        provider_uid="openai",
+        model="gpt-4",
+        messages=[TextMessage(role="user", content="Hi")]
+    )
 except httpx.HTTPStatusError as e:
-    print(f"HTTP error: {e.response.status_code}")
+    print(f"HTTP {e.response.status_code}: {e.response.text}")
 except httpx.RequestError as e:
-    print(f"Request error: {e}")
+    print(f"Request failed: {e}")
 ```
 
 ## Development
 
-### Running Tests
-
 ```bash
-# Install development dependencies
+# Install with dev dependencies
 pip install -e ".[testing]"
 
 # Run tests
 pytest tests/
-```
 
-### Type Checking
-
-The library is fully typed. Run type checking with:
-
-```bash
-pip install mypy
+# Type checking
 mypy livellm
 ```
 
@@ -582,19 +462,11 @@ mypy livellm
 - httpx >= 0.27.0
 - pydantic >= 2.0.0
 
-## License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
 ## Links
 
 - [GitHub Repository](https://github.com/qalby-tech/livellm-client-py)
 - [Issue Tracker](https://github.com/qalby-tech/livellm-client-py/issues)
 
-## Changelog
+## License
 
-See [CHANGELOG.md](CHANGELOG.md) for version history and changes.
+MIT License - see LICENSE file for details.

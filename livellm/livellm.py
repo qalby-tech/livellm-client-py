@@ -206,34 +206,373 @@ class LivellmClient:
             # Silently fail - we're in a destructor
             pass
 
+    @overload
     async def agent_run(
         self,
-        request: Union[AgentRequest, AgentFallbackRequest]
+        request: Union[AgentRequest, AgentFallbackRequest],
     ) -> AgentResponse:
-        result = await self.post(request.model_dump(), "agent/run", expect_json=True)
+        ...
+    
+    @overload
+    async def agent_run(
+        self,
+        *,
+        provider_uid: str,
+        model: str,
+        messages: list,
+        tools: Optional[list] = None,
+        **kwargs
+    ) -> AgentResponse:
+        ...
+    
+    async def agent_run(
+        self,
+        request: Optional[Union[AgentRequest, AgentFallbackRequest]] = None,
+        *,
+        provider_uid: Optional[str] = None,
+        model: Optional[str] = None,
+        messages: Optional[list] = None,
+        tools: Optional[list] = None,
+        **kwargs
+    ) -> AgentResponse:
+        """
+        Run an agent request.
+        
+        Can be called in two ways:
+        
+        1. With a request object:
+           await client.agent_run(AgentRequest(...))
+           await client.agent_run(AgentFallbackRequest(...))
+           
+        2. With individual parameters (keyword arguments):
+           await client.agent_run(
+               provider_uid="...",
+               model="gpt-4",
+               messages=[TextMessage(...)],
+               tools=[]
+           )
+        
+        Args:
+            request: An AgentRequest or AgentFallbackRequest object
+            provider_uid: The provider UID string
+            model: The model to use
+            messages: List of messages
+            tools: Optional list of tools
+            gen_config: Optional generation configuration
+            
+        Returns:
+            AgentResponse with the agent's output
+        """
+        # Check if first argument is a request object
+        if request is not None:
+            if not isinstance(request, (AgentRequest, AgentFallbackRequest)):
+                raise TypeError(
+                    f"First positional argument must be AgentRequest or AgentFallbackRequest, got {type(request)}"
+                )
+            result = await self.post(request.model_dump(), "agent/run", expect_json=True)
+            return AgentResponse(**result)
+        
+        # Otherwise, use keyword arguments
+        if provider_uid is None or model is None or messages is None:
+            raise ValueError(
+                "provider_uid, model, and messages are required. "
+                "Alternatively, pass an AgentRequest object as the first positional argument."
+            )
+        
+        agent_request = AgentRequest(
+            provider_uid=provider_uid,
+            model=model,
+            messages=messages,
+            tools=tools or [],
+            gen_config=kwargs or None
+        )
+        result = await self.post(agent_request.model_dump(), "agent/run", expect_json=True)
         return AgentResponse(**result)
+    
+    @overload
+    def agent_run_stream(
+        self,
+        request: Union[AgentRequest, AgentFallbackRequest],
+    ) -> AsyncIterator[AgentResponse]:
+        ...
+    
+    @overload
+    def agent_run_stream(
+        self,
+        *,
+        provider_uid: str,
+        model: str,
+        messages: list,
+        tools: Optional[list] = None,
+        **kwargs
+    ) -> AsyncIterator[AgentResponse]:
+        ...
     
     async def agent_run_stream(
         self,
-        request: Union[AgentRequest, AgentFallbackRequest]
+        request: Optional[Union[AgentRequest, AgentFallbackRequest]] = None,
+        *,
+        provider_uid: Optional[str] = None,
+        model: Optional[str] = None,
+        messages: Optional[list] = None,
+        tools: Optional[list] = None,
+        **kwargs
     ) -> AsyncIterator[AgentResponse]:
-        stream = await self.post(request.model_dump(), "agent/run_stream", expect_stream=True, expect_json=True)
-        async for chunk in stream:
-            yield AgentResponse(**chunk)
+        """
+        Run an agent request with streaming response.
+        
+        Can be called in two ways:
+        
+        1. With a request object:
+           async for chunk in client.agent_run_stream(AgentRequest(...)):
+               ...
+           async for chunk in client.agent_run_stream(AgentFallbackRequest(...)):
+               ...
+           
+        2. With individual parameters (keyword arguments):
+           async for chunk in client.agent_run_stream(
+               provider_uid="...",
+               model="gpt-4",
+               messages=[TextMessage(...)],
+               tools=[]
+           ):
+               ...
+        
+        Args:
+            request: An AgentRequest or AgentFallbackRequest object
+            provider_uid: The provider UID string
+            model: The model to use
+            messages: List of messages
+            tools: Optional list of tools
+            gen_config: Optional generation configuration
+            
+        Returns:
+            AsyncIterator of AgentResponse chunks
+        """
+        # Check if first argument is a request object
+        if request is not None:
+            if not isinstance(request, (AgentRequest, AgentFallbackRequest)):
+                raise TypeError(
+                    f"First positional argument must be AgentRequest or AgentFallbackRequest, got {type(request)}"
+                )
+            stream = await self.post(request.model_dump(), "agent/run_stream", expect_stream=True, expect_json=True)
+            async for chunk in stream:
+                yield AgentResponse(**chunk)
+        else:
+            # Otherwise, use keyword arguments
+            if provider_uid is None or model is None or messages is None:
+                raise ValueError(
+                    "provider_uid, model, and messages are required. "
+                    "Alternatively, pass an AgentRequest object as the first positional argument."
+                )
+            
+            agent_request = AgentRequest(
+                provider_uid=provider_uid,
+                model=model,
+                messages=messages,
+                tools=tools or [],
+                gen_config=kwargs or None
+            )
+            stream = await self.post(agent_request.model_dump(), "agent/run_stream", expect_stream=True, expect_json=True)
+            async for chunk in stream:
+                yield AgentResponse(**chunk)
+    
+    @overload
+    async def speak(
+        self,
+        request: Union[SpeakRequest, AudioFallbackRequest],
+    ) -> bytes:
+        ...
+    
+    @overload
+    async def speak(
+        self,
+        *,
+        provider_uid: str,
+        model: str,
+        text: str,
+        voice: str,
+        mime_type: str,
+        sample_rate: int,
+        chunk_size: int = 20,
+        **kwargs
+    ) -> bytes:
+        ...
     
     async def speak(
         self,
-        request: Union[SpeakRequest, AudioFallbackRequest]
+        request: Optional[Union[SpeakRequest, AudioFallbackRequest]] = None,
+        *,
+        provider_uid: Optional[str] = None,
+        model: Optional[str] = None,
+        text: Optional[str] = None,
+        voice: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        sample_rate: Optional[int] = None,
+        chunk_size: int = 20,
+        **kwargs
     ) -> bytes:
-        return await self.post(request.model_dump(), "audio/speak", expect_json=False)
+        """
+        Generate speech from text.
+        
+        Can be called in two ways:
+        
+        1. With a request object:
+           await client.speak(SpeakRequest(...))
+           await client.speak(AudioFallbackRequest(...))
+           
+        2. With individual parameters (keyword arguments):
+           await client.speak(
+               provider_uid="...",
+               model="tts-1",
+               text="Hello, world!",
+               voice="alloy",
+               mime_type="audio/pcm",
+               sample_rate=24000
+           )
+        
+        Args:
+            request: A SpeakRequest or AudioFallbackRequest object
+            provider_uid: The provider UID string
+            model: The model to use for TTS
+            text: The text to convert to speech
+            voice: The voice to use
+            mime_type: The MIME type of the output audio
+            sample_rate: The sample rate of the output audio
+            chunk_size: Chunk size in milliseconds (default: 20ms)
+            gen_config: Optional generation configuration
+            
+        Returns:
+            Audio data as bytes
+        """
+        # Check if first argument is a request object
+        if request is not None:
+            if not isinstance(request, (SpeakRequest, AudioFallbackRequest)):
+                raise TypeError(
+                    f"First positional argument must be SpeakRequest or AudioFallbackRequest, got {type(request)}"
+                )
+            return await self.post(request.model_dump(), "audio/speak", expect_json=False)
+        
+        # Otherwise, use keyword arguments
+        if provider_uid is None or model is None or text is None or voice is None or mime_type is None or sample_rate is None:
+            raise ValueError(
+                "provider_uid, model, text, voice, mime_type, and sample_rate are required. "
+                "Alternatively, pass a SpeakRequest object as the first positional argument."
+            )
+        
+        speak_request = SpeakRequest(
+            provider_uid=provider_uid,
+            model=model,
+            text=text,
+            voice=voice,
+            mime_type=mime_type,
+            sample_rate=sample_rate,
+            chunk_size=chunk_size,
+            gen_config=kwargs or None
+        )
+        return await self.post(speak_request.model_dump(), "audio/speak", expect_json=False)
+    
+    @overload
+    def speak_stream(
+        self,
+        request: Union[SpeakRequest, AudioFallbackRequest],
+    ) -> AsyncIterator[bytes]:
+        ...
+    
+    @overload
+    def speak_stream(
+        self,
+        *,
+        provider_uid: str,
+        model: str,
+        text: str,
+        voice: str,
+        mime_type: str,
+        sample_rate: int,
+        chunk_size: int = 20,
+        **kwargs
+    ) -> AsyncIterator[bytes]:
+        ...
     
     async def speak_stream(
         self,
-        request: Union[SpeakRequest, AudioFallbackRequest]
+        request: Optional[Union[SpeakRequest, AudioFallbackRequest]] = None,
+        *,
+        provider_uid: Optional[str] = None,
+        model: Optional[str] = None,
+        text: Optional[str] = None,
+        voice: Optional[str] = None,
+        mime_type: Optional[str] = None,
+        sample_rate: Optional[int] = None,
+        chunk_size: int = 20,
+        **kwargs
     ) -> AsyncIterator[bytes]:
-        speak_stream = await self.post(request.model_dump(), "audio/speak_stream", expect_stream=True, expect_json=False)
-        async for chunk in speak_stream:
-            yield chunk
+        """
+        Generate speech from text with streaming response.
+        
+        Can be called in two ways:
+        
+        1. With a request object:
+           async for chunk in client.speak_stream(SpeakRequest(...)):
+               ...
+           async for chunk in client.speak_stream(AudioFallbackRequest(...)):
+               ...
+           
+        2. With individual parameters (keyword arguments):
+           async for chunk in client.speak_stream(
+               provider_uid="...",
+               model="tts-1",
+               text="Hello, world!",
+               voice="alloy",
+               mime_type="audio/pcm",
+               sample_rate=24000
+           ):
+               ...
+        
+        Args:
+            request: A SpeakRequest or AudioFallbackRequest object
+            provider_uid: The provider UID string
+            model: The model to use for TTS
+            text: The text to convert to speech
+            voice: The voice to use
+            mime_type: The MIME type of the output audio
+            sample_rate: The sample rate of the output audio
+            chunk_size: Chunk size in milliseconds (default: 20ms)
+            gen_config: Optional generation configuration
+            
+        Returns:
+            AsyncIterator of audio data chunks as bytes
+        """
+        # Check if first argument is a request object
+        if request is not None:
+            if not isinstance(request, (SpeakRequest, AudioFallbackRequest)):
+                raise TypeError(
+                    f"First positional argument must be SpeakRequest or AudioFallbackRequest, got {type(request)}"
+                )
+            speak_stream = await self.post(request.model_dump(), "audio/speak_stream", expect_stream=True, expect_json=False)
+            async for chunk in speak_stream:
+                yield chunk
+        else:
+            # Otherwise, use keyword arguments
+            if provider_uid is None or model is None or text is None or voice is None or mime_type is None or sample_rate is None:
+                raise ValueError(
+                    "provider_uid, model, text, voice, mime_type, and sample_rate are required. "
+                    "Alternatively, pass a SpeakRequest object as the first positional argument."
+                )
+            
+            speak_request = SpeakRequest(
+                provider_uid=provider_uid,
+                model=model,
+                text=text,
+                voice=voice,
+                mime_type=mime_type,
+                sample_rate=sample_rate,
+                chunk_size=chunk_size,
+                gen_config=kwargs or None
+            )
+            speak_stream = await self.post(speak_request.model_dump(), "audio/speak_stream", expect_stream=True, expect_json=False)
+            async for chunk in speak_stream:
+                yield chunk
     
     @overload
     async def transcribe(
@@ -250,7 +589,7 @@ class LivellmClient:
         file: File,
         model: str,
         language: Optional[str] = None,
-        gen_config: Optional[dict] = None
+        **kwargs
     ) -> TranscribeResponse:
         ...
         
@@ -262,7 +601,7 @@ class LivellmClient:
         file: Optional[File] = None,
         model: Optional[str] = None,
         language: Optional[str] = None,
-        gen_config: Optional[dict] = None
+        **kwargs
     ) -> TranscribeResponse:
         """
         Transcribe audio to text.
@@ -314,7 +653,7 @@ class LivellmClient:
             "provider_uid": provider_uid,
             "model": model,
             "language": language,
-            "gen_config": json.dumps(gen_config) if gen_config else None
+            "gen_config": json.dumps(kwargs) if kwargs else None
         }
         result = await self.post_multipart(files, data, "audio/transcribe")
         return TranscribeResponse(**result)
