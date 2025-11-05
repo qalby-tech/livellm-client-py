@@ -6,7 +6,7 @@ from ..common import BaseRequest
 SpeakStreamResponse: TypeAlias = Tuple[AsyncIterator[bytes], str, int]
 
 
-class SpeakMimeType(Enum):
+class SpeakMimeType(str, Enum):
     PCM = "audio/pcm"
     WAV = "audio/wav"
     MP3 = "audio/mpeg"

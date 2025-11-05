@@ -7,9 +7,11 @@ They use a mock HTTP server to simulate the LiveLLM server responses.
 
 import pytest
 import httpx
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, Mock
 import json
 import base64
+import gc
+import warnings
 
 from livellm import LivellmClient
 from livellm.models import (
@@ -530,6 +532,88 @@ class TestContextManager:
         mock_httpx_client.delete.assert_called()
         mock_httpx_client.aclose.assert_called_once()
 
+    def test_garbage_collection_cleanup_with_configs(self, mock_httpx_client):
+        """Test that __del__ is called and shows warning when client has configs."""
+        # Mock the sync httpx.Client for __del__ cleanup
+        mock_sync_client = MagicMock(spec=httpx.Client)
+        mock_sync_response = MagicMock()
+        mock_sync_client.delete.return_value = mock_sync_response
+        mock_sync_client.__enter__ = MagicMock(return_value=mock_sync_client)
+        mock_sync_client.__exit__ = MagicMock(return_value=False)
+        
+        with patch("livellm.livellm.httpx.AsyncClient", return_value=mock_httpx_client):
+            with patch("livellm.livellm.httpx.Client", return_value=mock_sync_client):
+                # Create client with configs
+                client = LivellmClient(base_url="http://localhost:8000")
+                config = Settings(uid="test-gc", provider=ProviderKind.OPENAI, api_key=SecretStr("key"))
+                client.settings.append(config)
+                
+                # Capture warnings
+                with warnings.catch_warnings(record=True) as w:
+                    warnings.simplefilter("always")
+                    
+                    # Delete client and force garbage collection
+                    del client
+                    gc.collect()
+                    
+                    # Verify warning was raised
+                    assert len(w) == 1
+                    assert issubclass(w[0].category, ResourceWarning)
+                    assert "garbage collected without explicit cleanup" in str(w[0].message)
+    
+    def test_garbage_collection_cleanup_without_configs(self, mock_httpx_client):
+        """Test that __del__ doesn't show warning when client has no configs."""
+        # Mock the sync httpx.Client for __del__ cleanup
+        mock_sync_client = MagicMock(spec=httpx.Client)
+        mock_sync_client.__enter__ = MagicMock(return_value=mock_sync_client)
+        mock_sync_client.__exit__ = MagicMock(return_value=False)
+        
+        with patch("livellm.livellm.httpx.AsyncClient", return_value=mock_httpx_client):
+            with patch("livellm.livellm.httpx.Client", return_value=mock_sync_client):
+                # Create client without configs
+                client = LivellmClient(base_url="http://localhost:8000")
+                
+                # Capture warnings
+                with warnings.catch_warnings(record=True) as w:
+                    warnings.simplefilter("always")
+                    
+                    # Delete client and force garbage collection
+                    del client
+                    gc.collect()
+                    
+                    # Verify no warning was raised
+                    assert len(w) == 0
+    
+    def test_garbage_collection_cleanup_sync_deletion(self, mock_httpx_client):
+        """Test that __del__ deletes configs synchronously."""
+        # Mock the sync httpx.Client for __del__ cleanup
+        mock_sync_client = MagicMock(spec=httpx.Client)
+        mock_sync_response = MagicMock()
+        mock_sync_client.delete.return_value = mock_sync_response
+        mock_sync_client.__enter__ = MagicMock(return_value=mock_sync_client)
+        mock_sync_client.__exit__ = MagicMock(return_value=False)
+        
+        with patch("livellm.livellm.httpx.AsyncClient", return_value=mock_httpx_client):
+            with patch("livellm.livellm.httpx.Client", return_value=mock_sync_client) as mock_client_class:
+                # Create client with configs
+                client = LivellmClient(base_url="http://localhost:8000")
+                config1 = Settings(uid="test-gc-1", provider=ProviderKind.OPENAI, api_key=SecretStr("key"))
+                config2 = Settings(uid="test-gc-2", provider=ProviderKind.OPENAI, api_key=SecretStr("key"))
+                client.settings.extend([config1, config2])
+                
+                # Suppress warnings for this test
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    
+                    # Delete client and force garbage collection
+                    del client
+                    gc.collect()
+                
+                # Verify sync client was used for deletion
+                mock_client_class.assert_called()
+                # Verify delete was called for each config
+                assert mock_sync_client.delete.call_count == 2
+
 
 class TestErrorHandling:
     """Test error handling."""
@@ -582,6 +666,26 @@ class TestModels:
 
         assert message.role == MessageRole.USER
         assert message.content == "Hello"
+
+    def test_text_message_with_string_role(self):
+        """Test TextMessage creation with string role."""
+        # Test with string role
+        message = TextMessage(role="user", content="Hello")
+        
+        assert message.role == MessageRole.USER
+        assert message.content == "Hello"
+        
+        # Test serialization to ensure it's JSON serializable
+        serialized = message.model_dump()
+        assert serialized["role"] == "user"
+        assert serialized["content"] == "Hello"
+        
+        # Test with different roles
+        message_model = TextMessage(role="model", content="Hi there")
+        assert message_model.role == MessageRole.MODEL
+        
+        message_system = TextMessage(role="system", content="System message")
+        assert message_system.role == MessageRole.SYSTEM
 
     def test_binary_message_validation(self):
         """Test BinaryMessage validation."""

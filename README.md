@@ -14,18 +14,19 @@ Python client library for the LiveLLM Server - a unified proxy for AI agent, aud
 - 🛠️ **Agent tools** - Web search and MCP server integration
 - 🎙️ **Audio services** - Text-to-speech and transcription
 - ⚡ **Fallback strategies** - Sequential and parallel fallback handling
-- 📦 **Context manager support** - Automatic cleanup with async context managers
+- 📦 **Smart resource management** - Automatic cleanup via GC, context managers, or manual control
+- 🧹 **Memory safe** - No resource leaks with multiple cleanup strategies
 
 ## Installation
 
 ```bash
-pip install livellm-client
+pip install livellm
 ```
 
 Or with development dependencies:
 
 ```bash
-pip install livellm-client[testing]
+pip install livellm[testing]
 ```
 
 ## Quick Start
@@ -154,6 +155,18 @@ request = AgentRequest(
 response = await client.agent_run(request)
 print(f"Output: {response.output}")
 print(f"Tokens used - Input: {response.usage.input_tokens}, Output: {response.usage.output_tokens}")
+```
+
+**Note:** You can use either `MessageRole` enum or string values for the `role` parameter:
+
+```python
+# Using enum (recommended for type safety)
+TextMessage(role=MessageRole.USER, content="Hello")
+
+# Using string (more convenient)
+TextMessage(role="user", content="Hello")
+
+# Both work identically and serialize correctly
 ```
 
 #### Streaming Agent Response
@@ -392,9 +405,32 @@ fallback_request = AudioFallbackRequest(
 audio = await client.speak(fallback_request)
 ```
 
-## Context Manager Support
+## Resource Management
 
-The client supports async context managers for automatic cleanup:
+The client provides multiple ways to manage resources and cleanup:
+
+### 1. Automatic Cleanup (Garbage Collection)
+
+The client automatically cleans up when garbage collected:
+
+```python
+async def main():
+    client = LivellmClient(base_url="http://localhost:8000")
+    
+    # Use client...
+    response = await client.ping()
+    
+    # No explicit cleanup needed - handled automatically when object is destroyed
+    # Note: Provider configs are deleted synchronously from the server
+
+asyncio.run(main())
+```
+
+**Note**: While automatic cleanup works, it shows a `ResourceWarning` if configs exist to encourage explicit cleanup for immediate resource release.
+
+### 2. Context Manager (Recommended)
+
+Use async context managers for guaranteed cleanup:
 
 ```python
 async with LivellmClient(base_url="http://localhost:8000") as client:
@@ -408,16 +444,31 @@ async with LivellmClient(base_url="http://localhost:8000") as client:
 # Automatically cleans up configs and closes HTTP client
 ```
 
-Or manually:
+### 3. Manual Cleanup
+
+Explicitly call cleanup in a try/finally block:
 
 ```python
 client = LivellmClient(base_url="http://localhost:8000")
 try:
     # Use client...
-    pass
+    response = await client.ping()
 finally:
     await client.cleanup()
 ```
+
+### Cleanup Behavior
+
+The `cleanup()` method:
+- Deletes all provider configs created by the client
+- Closes the HTTP client connection
+- Is idempotent (safe to call multiple times)
+
+The `__del__()` destructor (automatic cleanup):
+- Triggers when the object is garbage collected
+- Synchronously deletes provider configs from the server
+- Closes the HTTP client connection
+- Shows a `ResourceWarning` if configs exist (to encourage explicit cleanup)
 
 ## API Reference
 
@@ -443,8 +494,9 @@ finally:
 - `transcribe_json(request: TranscribeRequest | TranscribeFallbackRequest) -> TranscribeResponse` - JSON transcription
 
 #### Cleanup
-- `cleanup() -> None` - Clean up resources and close client
+- `cleanup() -> None` - Clean up resources and close client (async)
 - `__aenter__() / __aexit__()` - Async context manager support
+- `__del__()` - Automatic cleanup when garbage collected (sync)
 
 ### Models
 

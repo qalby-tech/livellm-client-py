@@ -1,6 +1,8 @@
 """LiveLLM Client - Python client for the LiveLLM Proxy and Realtime APIs."""
+import asyncio
 import httpx
 import json
+import warnings
 from typing import List, Optional, AsyncIterator, Union
 from .models.common import Settings, SuccessResponse
 from .models.agent.agent import AgentRequest, AgentResponse
@@ -164,6 +166,7 @@ class LivellmClient:
         Should be called when you're done using the client.
         """
         for config in self.settings:
+            config: Settings = config
             await self.delete_config(config.uid)
         await self.client.aclose()
     
@@ -175,6 +178,32 @@ class LivellmClient:
         """Async context manager exit."""
         await self.cleanup()
     
+    def __del__(self):
+        """
+        Destructor to clean up resources when the client is garbage collected.
+        This will close the HTTP client and attempt to delete configs if cleanup wasn't called.
+        Note: It's recommended to use the async context manager or call cleanup() explicitly.
+        """
+        # Warn user if cleanup wasn't called
+        if self.settings:
+            warnings.warn(
+                "LivellmClient is being garbage collected without explicit cleanup. "
+                "Provider configs may not be deleted from the server. "
+                "Consider using 'async with' or calling 'await client.cleanup()' explicitly.",
+                ResourceWarning,
+                stacklevel=2
+            )
+        
+        # Close the httpx client synchronously
+        # httpx.AsyncClient stores a sync Transport that needs cleanup
+        try:
+            with httpx.Client(base_url=self.base_url) as client:
+                for config in self.settings:
+                    config: Settings = config
+                    client.delete("providers/config/{config.uid}", headers=self.headers)
+        except Exception:
+            # Silently fail - we're in a destructor
+            pass
 
     async def agent_run(
         self,

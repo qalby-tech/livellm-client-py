@@ -1,18 +1,17 @@
 # models for chat messages
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_serializer
 from enum import Enum
-from typing import Optional
+from typing import Optional, Union
 
-class MessageRole(Enum):
+class MessageRole(str, Enum):
     USER = "user"
     MODEL = "model"
     SYSTEM = "system"
 
 
 class Message(BaseModel):
-    role: MessageRole = Field(..., description="The role of the message")
-
-
+    role: Union[MessageRole, str] = Field(..., description="The role of the message")
+    
 class TextMessage(Message):
     content: str = Field(..., description="The content of the message")
 

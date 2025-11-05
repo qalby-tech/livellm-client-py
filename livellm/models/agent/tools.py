@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Literal
 from enum import Enum
 
-class ToolKind(Enum):
+class ToolKind(str, Enum):
     WEB_SEARCH = "web_search"
     MCP_STREAMABLE_SERVER = "mcp_streamable_server"
 
