@@ -11,6 +11,7 @@ from .models.audio.transcribe import TranscribeRequest, TranscribeResponse, File
 from .models.fallback import AgentFallbackRequest, AudioFallbackRequest, TranscribeFallbackRequest
 import websockets
 from .models.ws import WsRequest, WsResponse, WsStatus, WsAction
+from .transcripton import TranscriptionWsClient
 from abc import ABC, abstractmethod
 
 
@@ -502,10 +503,14 @@ class LivellmWsClient(BaseLivellmClient):
             ws_url = base_url.replace("http://", "ws://")
         else:
             ws_url = base_url
-        
-        self.base_url = f"{ws_url}/ws"
+
+        # Root WebSocket base URL (without path) and main /ws endpoint
+        self._ws_root_base_url = ws_url
+        self.base_url = f"{ws_url}/livellm/ws"
         self.timeout = timeout
         self.websocket = None
+        # Lazily-created clients
+        self._transcription = None
         
     async def connect(self):
         """Establish WebSocket connection."""
@@ -606,7 +611,21 @@ class LivellmWsClient(BaseLivellmClient):
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.disconnect()
-    
+
+    @property
+    def transcription(self) -> TranscriptionWsClient:
+        """
+        Lazily-initialized WebSocket transcription client that shares the same
+        server base URL and timeout as this realtime client.
+        """
+        if self._transcription is None:
+            # Use the ws root (e.g. ws://host:port) and let TranscriptionWsClient
+            # append its own /livellm/ws/transcription path.
+            self._transcription = TranscriptionWsClient(
+                base_url=self._ws_root_base_url,
+                timeout=self.timeout,
+            )
+        return self._transcription
 
 class LivellmClient(BaseLivellmClient):
     """HTTP-based LiveLLM client for request-response communication."""
@@ -617,8 +636,10 @@ class LivellmClient(BaseLivellmClient):
         timeout: Optional[float] = None,
         configs: Optional[List[Settings]] = None
         ):
-        base_url = base_url.rstrip("/")
-        self.base_url = f"{base_url}/livellm"
+        # Root server URL (http/https, without trailing slash)
+        self._root_base_url = base_url.rstrip("/")
+        # HTTP API base URL for this client
+        self.base_url = f"{self._root_base_url}/livellm"
         self.timeout = timeout
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) \
             if self.timeout else httpx.AsyncClient(base_url=self.base_url)
@@ -626,8 +647,26 @@ class LivellmClient(BaseLivellmClient):
         self.headers = {
             "Content-Type": "application/json",
         }
+        # Lazily-created realtime (WebSocket) client
+        self._realtime = None
         if configs:
             self.update_configs_post_init(configs)
+
+    @property
+    def realtime(self) -> LivellmWsClient:
+        """
+        Lazily-initialized WebSocket client for realtime operations (agent, audio, etc.)
+        that shares the same server base URL and timeout as this HTTP client.
+
+        Example:
+            client = LivellmClient(base_url=\"http://localhost:8000\")
+            async with client.realtime as session:
+                response = await session.agent_run(...)
+        """
+        if self._realtime is None:
+            # Pass the same root base URL; LivellmWsClient will handle ws/wss conversion.
+            self._realtime = LivellmWsClient(self._root_base_url, timeout=self.timeout)
+        return self._realtime
     
     def update_configs_post_init(self, configs: List[Settings]) -> SuccessResponse:
         """
@@ -767,6 +806,9 @@ class LivellmClient(BaseLivellmClient):
             config: Settings = config
             await self.delete_config(config.uid)
         await self.client.aclose()
+        # Also close any realtime WebSocket client if it was created
+        if self._realtime is not None:
+            await self._realtime.disconnect()
         
     def __del__(self):
         """
@@ -794,7 +836,6 @@ class LivellmClient(BaseLivellmClient):
         except Exception:
             # Silently fail - we're in a destructor
             pass
-        super().__del__()
 
     # Implement abstract methods from BaseLivellmClient
     

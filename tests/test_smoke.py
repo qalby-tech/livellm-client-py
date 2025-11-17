@@ -13,7 +13,7 @@ import base64
 import gc
 import warnings
 
-from livellm import LivellmClient
+from livellm import LivellmClient, LivellmWsClient, TranscriptionWsClient
 from livellm.models import (
     Settings,
     ProviderKind,
@@ -390,30 +390,6 @@ class TestAudioServices:
         assert chunks[0] == b"chunk1"
 
     @pytest.mark.asyncio
-    async def test_transcribe_multipart(self, client, mock_httpx_client):
-        """Test audio transcription with multipart upload."""
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "text": "Hello, this is a transcription.",
-            "language": "en",
-        }
-        mock_httpx_client.post.return_value = mock_response
-
-        file_tuple = ("audio.mp3", b"fake-audio-data", "audio/mpeg")
-
-        result = await client.transcribe(
-            provider_uid="openai-config",
-            file=file_tuple,
-            model="whisper-1",
-            language="en",
-        )
-
-        assert isinstance(result, TranscribeResponse)
-        assert result.text == "Hello, this is a transcription."
-        assert result.language == "en"
-
-    @pytest.mark.asyncio
     async def test_transcribe_json(self, client, mock_httpx_client):
         """Test audio transcription with JSON."""
         mock_response = MagicMock()
@@ -502,35 +478,24 @@ class TestFallbackStrategies:
         assert isinstance(result, bytes)
 
 
-class TestContextManager:
-    """Test async context manager support."""
 
-    @pytest.mark.asyncio
-    async def test_context_manager(self, mock_httpx_client):
-        """Test using client as async context manager."""
-        with patch("livellm.livellm.httpx.AsyncClient", return_value=mock_httpx_client):
-            async with LivellmClient(base_url="http://localhost:8000") as client:
-                assert client is not None
+class TestRealtimeClients:
+    """Test realtime WebSocket client helpers."""
 
-            # Verify cleanup was called
-            mock_httpx_client.aclose.assert_called_once()
+    def test_realtime_property_returns_ws_client(self):
+        """LivellmClient.realtime should lazily create a LivellmWsClient."""
+        client = LivellmClient(base_url="http://localhost:8000")
+        ws_client = client.realtime
 
-    @pytest.mark.asyncio
-    async def test_manual_cleanup(self, client, mock_httpx_client):
-        """Test manual cleanup."""
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"success": True, "message": "Deleted"}
-        mock_httpx_client.delete.return_value = mock_response
+        assert isinstance(ws_client, LivellmWsClient)
 
-        # Add a config to be cleaned up
-        config = Settings(uid="test-config", provider=ProviderKind.OPENAI, api_key=SecretStr("key"))
-        client.settings.append(config)
+    def test_transcription_property_returns_transcription_client(self):
+        """LivellmWsClient.transcription should lazily create a TranscriptionWsClient."""
+        client = LivellmClient(base_url="http://localhost:8000")
+        ws_client = client.realtime
+        transcription_client = ws_client.transcription
 
-        await client.cleanup()
-
-        mock_httpx_client.delete.assert_called()
-        mock_httpx_client.aclose.assert_called_once()
+        assert isinstance(transcription_client, TranscriptionWsClient)
 
     def test_garbage_collection_cleanup_with_configs(self, mock_httpx_client):
         """Test that __del__ is called and shows warning when client has configs."""

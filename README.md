@@ -7,12 +7,13 @@ Python client library for the LiveLLM Server - a unified proxy for AI agent, aud
 
 ## Features
 
-- 🚀 **Async-first** - Built on httpx for high-performance operations
+- 🚀 **Async-first** - Built on httpx and websockets for high-performance operations
 - 🔒 **Type-safe** - Full type hints and Pydantic validation
 - 🎯 **Multi-provider** - OpenAI, Google, Anthropic, Groq, ElevenLabs
 - 🔄 **Streaming** - Real-time streaming for agent and audio
 - 🛠️ **Flexible API** - Use request objects or keyword arguments
 - 🎙️ **Audio services** - Text-to-speech and transcription
+- 🎤 **Real-Time Transcription** - WebSocket-based live audio transcription with bidirectional streaming
 - ⚡ **Fallback strategies** - Sequential and parallel handling
 - 🧹 **Auto cleanup** - Context managers and garbage collection
 
@@ -301,6 +302,123 @@ transcription = await client.transcribe(
 )
 ```
 
+### Real-Time Transcription (WebSocket)
+
+The realtime transcription API is available either **directly** via `TranscriptionWsClient` or **through** `LivellmClient.realtime.transcription`.
+
+#### Using `TranscriptionWsClient` directly
+
+```python
+import asyncio
+from livellm import TranscriptionWsClient
+from livellm.models import (
+    TranscriptionInitWsRequest,
+    TranscriptionAudioChunkWsRequest,
+    SpeakMimeType,
+)
+
+async def transcribe_live_direct():
+    base_url = "ws://localhost:8000"  # WebSocket base URL
+
+    async with TranscriptionWsClient(base_url, timeout=30) as client:
+        # Define audio source (file, microphone, stream, etc.)
+        async def audio_source():
+            with open("audio.pcm", "rb") as f:
+                while chunk := f.read(4096):
+                    yield TranscriptionAudioChunkWsRequest(audio=chunk)
+                    await asyncio.sleep(0.1)  # Simulate real-time
+
+        # Initialize transcription session
+        init_request = TranscriptionInitWsRequest(
+            provider_uid="openai",
+            model="gpt-4o-mini-transcribe",
+            language="en",  # or "auto" for detection
+            input_sample_rate=24000,
+            input_audio_format=SpeakMimeType.PCM,
+            gen_config={},
+        )
+
+        # Stream audio and receive transcriptions
+        async for response in client.start_session(init_request, audio_source()):
+            print(f"Transcription: {response.transcription}")
+            if response.is_end:
+                print("Transcription complete!")
+                break
+
+asyncio.run(transcribe_live_direct())
+```
+
+#### Using `LivellmClient.realtime.transcription` (and running agents while listening)
+
+```python
+import asyncio
+from livellm import LivellmClient
+from livellm.models import (
+    TextMessage,
+    TranscriptionInitWsRequest,
+    TranscriptionAudioChunkWsRequest,
+    SpeakMimeType,
+)
+
+async def transcribe_and_chat():
+    # Central HTTP client; .realtime and .transcription expose WebSocket APIs
+    client = LivellmClient(base_url="http://localhost:8000", timeout=30)
+
+    async with client.realtime as realtime:
+        async with realtime.transcription as t_client:
+            async def audio_source():
+                with open("audio.pcm", "rb") as f:
+                    while chunk := f.read(4096):
+                        yield TranscriptionAudioChunkWsRequest(audio=chunk)
+                        await asyncio.sleep(0.1)
+
+            init_request = TranscriptionInitWsRequest(
+                provider_uid="openai",
+                model="gpt-4o-mini-transcribe",
+                language="en",
+                input_sample_rate=24000,
+                input_audio_format=SpeakMimeType.PCM,
+                gen_config={},
+            )
+
+            # Listen for transcriptions and, for each chunk, run an agent request
+            async for resp in t_client.start_session(init_request, audio_source()):
+                print("User said:", resp.transcription)
+
+                # You can call agent_run (or speak, etc.) while the transcription stream is active
+                agent_response = await realtime.agent_run(
+                    provider_uid="openai",
+                    model="gpt-4",
+                    messages=[
+                        TextMessage(role="user", content=resp.transcription),
+                    ],
+                    temperature=0.7,
+                )
+                print("Agent:", agent_response.output)
+
+                if resp.is_end:
+                    print("Transcription session complete")
+                    break
+
+asyncio.run(transcribe_and_chat())
+```
+
+**Supported Audio Formats:**
+- **PCM**: 16-bit uncompressed (recommended)
+- **μ-law**: 8-bit telephony format (North America/Japan)
+- **A-law**: 8-bit telephony format (Europe/rest of world)
+
+**Use Cases:**
+- 🎙️ Voice assistants and chatbots
+- 📝 Live captioning and subtitles
+- 🎤 Meeting transcription
+- 🗣️ Voice commands and control
+
+**See also:** 
+- [TRANSCRIPTION_CLIENT.md](TRANSCRIPTION_CLIENT.md) - Complete transcription guide
+- [example_transcription.py](example_transcription.py) - Python examples
+- [example_transcription_browser.html](example_transcription_browser.html) - Browser demo
+
 ### Fallback Strategies
 
 Handle failures automatically with sequential or parallel fallback:
@@ -393,6 +511,12 @@ response = await client.ping()
 - `speak_stream(request | **kwargs)` - Text-to-speech (streaming)
 - `transcribe(request | **kwargs)` - Speech-to-text
 
+**Real-Time Transcription (TranscriptionWsClient)**
+- `connect()` - Establish WebSocket connection
+- `disconnect()` - Close WebSocket connection
+- `start_session(init_request, audio_source)` - Start bidirectional streaming transcription
+- `async with client:` - Auto connection management (recommended)
+
 **Cleanup**
 - `cleanup()` - Release resources
 - `async with client:` - Auto cleanup (recommended)
@@ -412,6 +536,8 @@ response = await client.ping()
 - `AgentRequest(provider_uid, model, messages, tools?, gen_config?)`
 - `SpeakRequest(provider_uid, model, text, voice, mime_type, sample_rate, gen_config?)`
 - `TranscribeRequest(provider_uid, file, model, language?, gen_config?)`
+- `TranscriptionInitWsRequest(provider_uid, model, language?, input_sample_rate?, input_audio_format?, gen_config?)`
+- `TranscriptionAudioChunkWsRequest(audio)` - Audio chunk for streaming
 
 **Tools**
 - `WebSearchInput(kind=ToolKind.WEB_SEARCH, search_context_size)`
@@ -425,6 +551,7 @@ response = await client.ping()
 **Responses**
 - `AgentResponse(output, usage{input_tokens, output_tokens}, ...)`
 - `TranscribeResponse(text, language)`
+- `TranscriptionWsResponse(transcription, is_end)` - Real-time transcription result
 
 ## Error Handling
 
@@ -461,6 +588,15 @@ mypy livellm
 - Python 3.10+
 - httpx >= 0.27.0
 - pydantic >= 2.0.0
+- websockets >= 15.0.1
+
+## Documentation
+
+- [README.md](README.md) - Main documentation (you are here)
+- [TRANSCRIPTION_CLIENT.md](TRANSCRIPTION_CLIENT.md) - Complete real-time transcription guide
+- [CLIENT_EXAMPLES.md](CLIENT_EXAMPLES.md) - Usage examples for all features
+- [example_transcription.py](example_transcription.py) - Python transcription examples
+- [example_transcription_browser.html](example_transcription_browser.html) - Browser demo
 
 ## Links
 

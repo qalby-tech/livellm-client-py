@@ -94,7 +94,7 @@ class TranscriptionWsClient:
         
         # Receive transcription responses
         try:
-            while True:
+            while not send_task.done():
                 response_data = await self.websocket.recv()
                 transcription_response = TranscriptionWsResponse(**json.loads(response_data))
                 yield transcription_response
