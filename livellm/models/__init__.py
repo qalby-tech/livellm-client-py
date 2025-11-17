@@ -5,6 +5,7 @@ from .agent.chat import Message, MessageRole, TextMessage, BinaryMessage
 from .agent.tools import Tool, ToolInput, ToolKind, WebSearchInput, MCPStreamableServerInput
 from .audio.speak import SpeakMimeType, SpeakRequest, SpeakStreamResponse
 from .audio.transcribe import TranscribeRequest, TranscribeResponse, File
+from .transcription import TranscriptionInitWsRequest, TranscriptionAudioChunkWsRequest, TranscriptionWsResponse
 
 
 __all__ = [
@@ -38,4 +39,8 @@ __all__ = [
     "TranscribeRequest",
     "TranscribeResponse",
     "File",
+    # Real-time Transcription
+    "TranscriptionInitWsRequest",
+    "TranscriptionAudioChunkWsRequest",
+    "TranscriptionWsResponse",
 ]
