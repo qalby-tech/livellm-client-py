@@ -493,7 +493,8 @@ class LivellmWsClient(BaseLivellmClient):
     def __init__(
         self, 
         base_url: str, 
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
+        max_size: Optional[int] = None
     ):
         # Convert HTTP(S) URL to WS(S) URL
         base_url = base_url.rstrip("/")
@@ -511,6 +512,7 @@ class LivellmWsClient(BaseLivellmClient):
         self.websocket = None
         # Lazily-created clients
         self._transcription = None
+        self.max_size = max_size or 1024 * 1024 * 10 # 10MB is default max size
         
     async def connect(self):
         """Establish WebSocket connection."""
@@ -520,7 +522,8 @@ class LivellmWsClient(BaseLivellmClient):
         self.websocket = await websockets.connect(
             self.base_url, 
             open_timeout=self.timeout,
-            close_timeout=self.timeout
+            close_timeout=self.timeout,
+            max_size=self.max_size
         )
                 
         return self.websocket

@@ -28,9 +28,17 @@ class EncodedSpeakResponse(BaseModel):
     content_type: SpeakMimeType = Field(..., description="The content type of the audio")
     sample_rate: int = Field(..., description="The sample rate of the audio")
 
-    @field_validator('audio', mode='after')
+    @field_validator("audio", mode="after")
     @classmethod
     def validate_audio(cls, v: bytes | str) -> bytes:
-        if isinstance(v, bytes):
-            return base64.b64decode(v) # decode from base64 string to bytes
-        return v # if bytes, assume it's already a base64 decoded bytes
+        """
+        Ensure that `audio` is always returned as raw bytes.
+
+        - If the server returns a base64-encoded *string*, decode it.
+        - If the server already returned raw bytes, pass them through.
+        """
+        if isinstance(v, str):
+            # Server sent base64-encoded string → decode to raw bytes
+            return base64.b64decode(v)
+        # Already bytes → assume it's raw audio
+        return v

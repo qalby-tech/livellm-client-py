@@ -10,11 +10,12 @@ import json
 
 
 class TranscriptionWsClient:
-    def __init__(self, base_url: str, timeout: Optional[float] = None):
+    def __init__(self, base_url: str, timeout: Optional[float] = None, max_size: Optional[int] = None):
         self.base_url = base_url.rstrip("/")
         self.url = f"{base_url}/livellm/ws/transcription"
         self.timeout = timeout
         self.websocket = None
+        self.max_size = max_size or 1024 * 1024 * 10 # 10MB is default max size
     
     async def connect(self):
         """
@@ -23,7 +24,8 @@ class TranscriptionWsClient:
         self.websocket = await websockets.connect(
             self.url,
             open_timeout=self.timeout,
-            close_timeout=self.timeout
+            close_timeout=self.timeout,
+            max_size=self.max_size
         )
     
     async def disconnect(self):
