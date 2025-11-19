@@ -564,11 +564,11 @@ class LivellmWsClient(BaseLivellmClient):
             
             if response.status == WsStatus.ERROR:
                 raise Exception(f"WebSocket stream failed: {response.error}")
-            
-            yield response
-            
+                        
             if response.status == WsStatus.SUCCESS:
                 break
+            
+            yield response
     
     # Implement abstract methods from BaseLivellmClient
     
