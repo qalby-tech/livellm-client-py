@@ -585,18 +585,20 @@ class LivellmWsClient(BaseLivellmClient):
         async for response in self.get_response_stream(WsAction.AGENT_RUN_STREAM, request.model_dump()):
             yield AgentResponse(**response.data)
     
-    async def handle_speak(self, request: Union[SpeakRequest, AudioFallbackRequest]) -> EncodedSpeakResponse:
+    async def handle_speak(self, request: Union[SpeakRequest, AudioFallbackRequest]) -> bytes:
         """Handle speak request via WebSocket."""
         response = await self.get_response(
             WsAction.AUDIO_SPEAK,
             request.model_dump()
         )
-        return EncodedSpeakResponse(**response.data)
+        print("audio speak response", response)
+        return EncodedSpeakResponse(**response.data).audio
     
-    async def handle_speak_stream(self, request: Union[SpeakRequest, AudioFallbackRequest]) -> AsyncIterator[EncodedSpeakResponse]:
+    async def handle_speak_stream(self, request: Union[SpeakRequest, AudioFallbackRequest]) -> AsyncIterator[bytes]:
         """Handle streaming speak request via WebSocket."""
         async for response in self.get_response_stream(WsAction.AUDIO_SPEAK_STREAM, request.model_dump()):
-            yield EncodedSpeakResponse(**response.data)
+            print("audio speak stream response", response)
+            yield EncodedSpeakResponse(**response.data).audio
     
     async def handle_transcribe(self, request: Union[TranscribeRequest, TranscribeFallbackRequest]) -> TranscribeResponse:
         """Handle transcribe request via WebSocket."""

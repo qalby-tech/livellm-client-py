@@ -8,7 +8,6 @@ class WsAction(str, Enum):
     AUDIO_SPEAK = "audio_speak"
     AUDIO_SPEAK_STREAM = "audio_speak_stream"
     AUDIO_TRANSCRIBE = "audio_transcribe"
-    TRANSCRIPTION_SESSION = "transcription_session"
 
 
 class WsStatus(str, Enum):
@@ -17,11 +16,13 @@ class WsStatus(str, Enum):
     ERROR = "error"
 
 class WsRequest(BaseModel):
+    session_id: str = Field(..., description="The session ID")
     action: WsAction = Field(..., description="The action to perform")
     payload: Union[dict, BaseModel] = Field(..., description="The payload for the action")
 
 
 class WsResponse(BaseModel):
+    session_id: str = Field(..., description="The session ID")
     status: WsStatus = Field(..., description="The status of the response")
     action: WsAction = Field(..., description="The action that was performed")
     data: Union[dict, BaseModel] = Field(..., description="The data for the response")

@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 from livellm.models.audio.speak import SpeakMimeType
+from typing import Optional
 import base64
 
 class TranscriptionInitWsRequest(BaseModel):
@@ -10,6 +11,9 @@ class TranscriptionInitWsRequest(BaseModel):
     input_audio_format: SpeakMimeType = Field(default=SpeakMimeType.PCM, description="The input audio format (pcm, ulaw, alaw)")
     gen_config: dict = Field(default={}, description="The generation configuration")
 
+class TranscriptionInitWsResponse(BaseModel):
+    success: bool = Field(..., description="Whether the initialization was successful")
+    error: Optional[str] = Field(default=None, description="The error message if the initialization was not successful")
 
 class TranscriptionAudioChunkWsRequest(BaseModel):
     audio: str = Field(..., description="The audio (base64 encoded)")
@@ -29,4 +33,3 @@ class TranscriptionAudioChunkWsRequest(BaseModel):
 
 class TranscriptionWsResponse(BaseModel):
     transcription: str = Field(..., description="The transcription")
-    is_end: bool = Field(..., description="Whether the response is the end of the transcription")
