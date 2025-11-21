@@ -1,8 +1,8 @@
 from livellm.models.transcription import (
-    TranscriptionInitWsRequest, 
+    TranscriptionInitWsRequest,
+    TranscriptionInitWsResponse,
     TranscriptionAudioChunkWsRequest, 
     TranscriptionWsResponse)
-from livellm.models.ws import WsResponse, WsStatus
 from typing import Optional, AsyncIterator
 import websockets
 import asyncio
@@ -68,24 +68,25 @@ class TranscriptionWsClient:
             async with TranscriptionWsClient(url) as client:
                 async for response in client.start_session(init_request, audio_source()):
                     print(response.transcription)
-                    if response.is_end:
-                        break
             ```
         """
-        # Send initialization request
+        # Send initialization request as JSON
         await self.websocket.send(request.model_dump_json())
         
         # Wait for initialization response
         response_data = await self.websocket.recv()
-        response = WsResponse(**json.loads(response_data))
-        if response.status == WsStatus.ERROR:
-            raise Exception(f"Failed to start transcription session: {response.error}")
+        init_response = TranscriptionInitWsResponse(**json.loads(response_data))
+        if not init_response.success:
+            raise Exception(f"Failed to start transcription session: {init_response.error}")
 
         # Start sending audio chunks in background
         async def send_chunks():
             try:
                 async for chunk in source:
                     await self.websocket.send(chunk.model_dump_json())
+            except websockets.ConnectionClosed:
+                # Connection closed, stop sending
+                pass
             except Exception as e:
                 # If there's an error sending chunks, close the websocket
                 print(f"Error sending chunks: {e}")
@@ -96,16 +97,14 @@ class TranscriptionWsClient:
         
         # Receive transcription responses
         try:
-            while not send_task.done():
-                response_data = await self.websocket.recv()
-                transcription_response = TranscriptionWsResponse(**json.loads(response_data))
-                yield transcription_response
-                
-                # Stop if we received the final transcription
-                if transcription_response.is_end:
+            while True:
+                try:
+                    response_data = await self.websocket.recv()
+                    transcription_response = TranscriptionWsResponse(**json.loads(response_data))
+                    yield transcription_response
+                except websockets.ConnectionClosed:
+                    # Connection closed, stop receiving
                     break
-        except websockets.ConnectionClosed:
-            pass
         finally:
             # Cancel the send task if still running
             if not send_task.done():

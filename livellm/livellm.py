@@ -3,7 +3,7 @@ import asyncio
 import httpx
 import json
 import warnings
-from typing import List, Optional, AsyncIterator, Union, overload
+from typing import List, Optional, AsyncIterator, Union, overload, Dict
 from .models.common import Settings, SuccessResponse
 from .models.agent.agent import AgentRequest, AgentResponse
 from .models.audio.speak import SpeakRequest, EncodedSpeakResponse
@@ -12,9 +12,12 @@ from .models.fallback import AgentFallbackRequest, AudioFallbackRequest, Transcr
 import websockets
 from .models.ws import WsRequest, WsResponse, WsStatus, WsAction
 from .transcripton import TranscriptionWsClient
+from uuid import uuid4
+import logging
 from abc import ABC, abstractmethod
 
 
+logger = logging.getLogger(__name__)
 
 class BaseLivellmClient(ABC):
 
@@ -494,7 +497,8 @@ class LivellmWsClient(BaseLivellmClient):
         self, 
         base_url: str, 
         timeout: Optional[float] = None,
-        max_size: Optional[int] = None
+        max_size: Optional[int] = None,
+        max_buffer_size: Optional[int] = None
     ):
         # Convert HTTP(S) URL to WS(S) URL
         base_url = base_url.rstrip("/")
@@ -510,9 +514,13 @@ class LivellmWsClient(BaseLivellmClient):
         self.base_url = f"{ws_url}/livellm/ws"
         self.timeout = timeout
         self.websocket = None
+        self.sessions: Dict[str, asyncio.Queue] = {}
+        self.max_buffer_size = max_buffer_size or 0 # None means unlimited buffer size
         # Lazily-created clients
         self._transcription = None
         self.max_size = max_size or 1024 * 1024 * 10 # 10MB is default max size
+
+        self.__listen_for_responses_task = None
         
     async def connect(self):
         """Establish WebSocket connection."""
@@ -525,50 +533,78 @@ class LivellmWsClient(BaseLivellmClient):
             close_timeout=self.timeout,
             max_size=self.max_size
         )
+        self.__listen_for_responses_task = asyncio.create_task(self.listen_for_responses())
                 
         return self.websocket
+    
+    async def listen_for_responses(self):
+        while True:
+            response_data = await self.websocket.recv()
+            response = WsResponse(**json.loads(response_data))            
+            try:
+                self.sessions[response.session_id].put_nowait(response)
+            except asyncio.QueueFull:
+                self.sessions[response.session_id].get_nowait()
+                logger.warning(f"Session {response.session_id} buffer is full, dropping oldest message")
         
+    async def get_or_update_session(self, session_id: str):
+        if session_id not in self.sessions:
+            self.sessions[session_id] = asyncio.Queue(maxsize=self.max_buffer_size)
+        return self.sessions[session_id]
+    
     async def disconnect(self):
         """Close WebSocket connection."""
         if self.websocket is not None:
             await self.websocket.close()
             self.websocket = None
+        if self.__listen_for_responses_task is not None:
+            self.__listen_for_responses_task.cancel()
+            self.__listen_for_responses_task = None
+        self.sessions.clear()
     
-    async def get_response(self, action: WsAction, payload: dict) -> WsResponse:
+    async def get_response(self, action: WsAction, payload: dict) -> dict:
         """Send a request and wait for response."""
         if self.websocket is None:
             await self.connect()
         
-        request = WsRequest(action=action, payload=payload)
+        session_id = uuid4().hex
+        request = WsRequest(session_id=session_id, action=action, payload=payload)
+        q = await self.get_or_update_session(session_id)
         await self.websocket.send(json.dumps(request.model_dump()))
         
-        response_data = await self.websocket.recv()
-        response = WsResponse(**json.loads(response_data))
-        
+        response: WsResponse = await q.get()
+        self.sessions.pop(session_id)
         if response.status == WsStatus.ERROR:
-            raise Exception(f"WebSocket request failed: {response.error}")
-        
-        return response
+            raise Exception(f"WebSocket failed: {response.error}")
+        elif response.status == WsStatus.SUCCESS:
+            return response.data
+        else:
+            raise Exception(f"WebSocket failed with unknown status: {response}")
     
-    async def get_response_stream(self, action: WsAction, payload: dict) -> AsyncIterator[WsResponse]:
+    async def get_response_stream(self, action: WsAction, payload: dict) -> AsyncIterator[dict]:
         """Send a request and stream responses."""
         if self.websocket is None:
             await self.connect()
         
-        request = WsRequest(action=action, payload=payload)
+        session_id = uuid4().hex
+        request = WsRequest(session_id=session_id, action=action, payload=payload)
+        q = await self.get_or_update_session(session_id)
         await self.websocket.send(json.dumps(request.model_dump()))
         
         while True:
-            response_data = await self.websocket.recv()
-            response = WsResponse(**json.loads(response_data))
+            response: WsResponse = await q.get()
             
-            if response.status == WsStatus.ERROR:
-                raise Exception(f"WebSocket stream failed: {response.error}")
-                        
-            if response.status == WsStatus.SUCCESS:
+            if response.status == WsStatus.STREAMING:
+                yield response.data
+            elif response.status == WsStatus.SUCCESS:
+                self.sessions.pop(session_id)
                 break
-            
-            yield response
+            elif response.status == WsStatus.ERROR:
+                self.sessions.pop(session_id)
+                raise Exception(f"WebSocket failed: {response.error}")
+            else:
+                self.sessions.pop(session_id)
+                raise Exception(f"WebSocket failed with unknown status: {response}")
     
     # Implement abstract methods from BaseLivellmClient
     
@@ -578,12 +614,12 @@ class LivellmWsClient(BaseLivellmClient):
             WsAction.AGENT_RUN,
             request.model_dump()
         )
-        return AgentResponse(**response.data)
+        return AgentResponse(**response)
     
     async def handle_agent_run_stream(self, request: Union[AgentRequest, AgentFallbackRequest]) -> AsyncIterator[AgentResponse]:
         """Handle streaming agent run via WebSocket."""
         async for response in self.get_response_stream(WsAction.AGENT_RUN_STREAM, request.model_dump()):
-            yield AgentResponse(**response.data)
+            yield AgentResponse(**response)
     
     async def handle_speak(self, request: Union[SpeakRequest, AudioFallbackRequest]) -> bytes:
         """Handle speak request via WebSocket."""
@@ -591,14 +627,12 @@ class LivellmWsClient(BaseLivellmClient):
             WsAction.AUDIO_SPEAK,
             request.model_dump()
         )
-        print("audio speak response", response)
-        return EncodedSpeakResponse(**response.data).audio
+        return EncodedSpeakResponse(**response).audio
     
     async def handle_speak_stream(self, request: Union[SpeakRequest, AudioFallbackRequest]) -> AsyncIterator[bytes]:
         """Handle streaming speak request via WebSocket."""
         async for response in self.get_response_stream(WsAction.AUDIO_SPEAK_STREAM, request.model_dump()):
-            print("audio speak stream response", response)
-            yield EncodedSpeakResponse(**response.data).audio
+            yield EncodedSpeakResponse(**response).audio
     
     async def handle_transcribe(self, request: Union[TranscribeRequest, TranscribeFallbackRequest]) -> TranscribeResponse:
         """Handle transcribe request via WebSocket."""
@@ -606,10 +640,9 @@ class LivellmWsClient(BaseLivellmClient):
             WsAction.AUDIO_TRANSCRIBE,
             request.model_dump()
         )
-        return TranscribeResponse(**response.data)
+        return TranscribeResponse(**response)
     
     # Context manager support
-    
     async def __aenter__(self):
         await self.connect()
         return self
