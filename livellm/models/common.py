@@ -14,6 +14,7 @@ class ProviderKind(Enum):
     """Unified provider types for both agent and audio services"""
     # Agent providers
     OPENAI = "openai"
+    OPENAI_CHAT = "openai_chat"
     GOOGLE = "google"
     ANTHROPIC = "anthropic"
     GROQ = "groq"
