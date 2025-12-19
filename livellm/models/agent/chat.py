@@ -1,7 +1,7 @@
 # models for chat messages
 from pydantic import BaseModel, Field, model_validator, field_serializer
 from enum import Enum
-from typing import Optional, Union
+from typing import Optional, Union, Any, Dict
 
 class MessageRole(str, Enum):
     USER = "user"
@@ -32,10 +32,10 @@ class BinaryMessage(Message):
 class ToolCallMessage(Message):
     """Message representing a tool call made by the agent"""
     tool_name: str = Field(..., description="The name of the tool being called")
-    args: dict = Field(..., description="The arguments passed to the tool")
+    args: Union[Dict[str, Any], str] = Field(..., description="The arguments passed to the tool")
 
 class ToolReturnMessage(Message):
     """Message representing the return value from a tool call"""
     tool_name: str = Field(..., description="The name of the tool that was called")
-    content: str = Field(..., description="The return value from the tool")
+    content: Any = Field(..., description="The return value from the tool")
 
