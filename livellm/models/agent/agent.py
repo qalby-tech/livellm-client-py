@@ -9,7 +9,7 @@ from ..common import BaseRequest
 
 class AgentRequest(BaseRequest):
     model: str = Field(..., description="The model to use")
-    messages: List[Union[TextMessage, BinaryMessage]] = Field(..., description="The messages to use")
+    messages: List[Union[TextMessage, BinaryMessage, ToolCallMessage, ToolReturnMessage]] = Field(..., description="The messages to use")
     tools: List[Union[WebSearchInput, MCPStreamableServerInput]] = Field(default_factory=list, description="The tools to use")
     gen_config: Optional[dict] = Field(default=None, description="The configuration for the generation")
     include_history: bool = Field(default=False, description="Whether to include full conversation history in the response")
