@@ -230,6 +230,51 @@ response = await client.agent_run(
 )
 ```
 
+#### Agent with Conversation History
+
+You can request the full conversation history (including tool calls and returns) by setting `include_history=True`:
+
+```python
+from livellm.models import TextMessage, ToolCallMessage, ToolReturnMessage
+
+# Request with history enabled
+response = await client.agent_run(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[TextMessage(role="user", content="Search for latest AI news")],
+    tools=[WebSearchInput(kind=ToolKind.WEB_SEARCH)],
+    include_history=True  # Enable history in response
+)
+
+print(f"Output: {response.output}")
+
+# Access full conversation history including tool interactions
+if response.history:
+    for msg in response.history:
+        if isinstance(msg, TextMessage):
+            print(f"{msg.role}: {msg.content}")
+        elif isinstance(msg, ToolCallMessage):
+            print(f"Tool Call: {msg.tool_name}({msg.args})")
+        elif isinstance(msg, ToolReturnMessage):
+            print(f"Tool Return from {msg.tool_name}: {msg.content}")
+```
+
+**History Message Types:**
+- `TextMessage` - Regular text messages (user, model, system)
+- `BinaryMessage` - Images or other binary content
+- `ToolCallMessage` - Tool invocations made by the agent
+  - `tool_name` - Name of the tool called
+  - `args` - Arguments passed to the tool
+- `ToolReturnMessage` - Results returned from tool calls
+  - `tool_name` - Name of the tool that was called
+  - `content` - The return value from the tool
+
+**Use cases:**
+- Debugging tool interactions
+- Maintaining conversation state across multiple requests
+- Auditing and logging complete conversations
+- Building conversational UIs with full context visibility
+
 ### Audio Services
 
 #### Text-to-Speech
@@ -530,10 +575,12 @@ response = await client.ping()
 **Messages**
 - `TextMessage(role, content)` - Text message
 - `BinaryMessage(role, content, mime_type, caption?)` - Image/audio message
-- `MessageRole` - `USER` | `MODEL` | `SYSTEM` (or use strings: `"user"`, `"model"`, `"system"`)
+- `ToolCallMessage(role, tool_name, args)` - Tool invocation by agent
+- `ToolReturnMessage(role, tool_name, content)` - Tool execution result
+- `MessageRole` - `USER` | `MODEL` | `SYSTEM` | `TOOL_CALL` | `TOOL_RETURN` (or use strings)
 
 **Requests**
-- `AgentRequest(provider_uid, model, messages, tools?, gen_config?)`
+- `AgentRequest(provider_uid, model, messages, tools?, gen_config?, include_history?)` - Set `include_history=True` to get full conversation
 - `SpeakRequest(provider_uid, model, text, voice, mime_type, sample_rate, gen_config?)`
 - `TranscribeRequest(provider_uid, file, model, language?, gen_config?)`
 - `TranscriptionInitWsRequest(provider_uid, model, language?, input_sample_rate?, input_audio_format?, gen_config?)`
@@ -549,7 +596,7 @@ response = await client.ping()
 - `FallbackStrategy` - `SEQUENTIAL` | `PARALLEL`
 
 **Responses**
-- `AgentResponse(output, usage{input_tokens, output_tokens}, ...)`
+- `AgentResponse(output, usage{input_tokens, output_tokens}, history?)` - `history` included when `include_history=True`
 - `TranscribeResponse(text, language)`
 - `TranscriptionWsResponse(transcription, is_end)` - Real-time transcription result
 

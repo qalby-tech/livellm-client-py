@@ -1,7 +1,7 @@
 from .common import BaseRequest, ProviderKind, Settings, SuccessResponse
 from .fallback import AgentFallbackRequest, AudioFallbackRequest, TranscribeFallbackRequest, FallbackStrategy
 from .agent.agent import AgentRequest, AgentResponse, AgentResponseUsage
-from .agent.chat import Message, MessageRole, TextMessage, BinaryMessage
+from .agent.chat import Message, MessageRole, TextMessage, BinaryMessage, ToolCallMessage, ToolReturnMessage
 from .agent.tools import Tool, ToolInput, ToolKind, WebSearchInput, MCPStreamableServerInput
 from .audio.speak import SpeakMimeType, SpeakRequest, SpeakStreamResponse
 from .audio.transcribe import TranscribeRequest, TranscribeResponse, File
@@ -27,6 +27,8 @@ __all__ = [
     "MessageRole",
     "TextMessage",
     "BinaryMessage",
+    "ToolCallMessage",
+    "ToolReturnMessage",
     "Tool",
     "ToolInput",
     "ToolKind",

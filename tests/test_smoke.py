@@ -23,6 +23,8 @@ from livellm.models import (
     AgentResponseUsage,
     TextMessage,
     BinaryMessage,
+    ToolCallMessage,
+    ToolReturnMessage,
     MessageRole,
     SpeakRequest,
     SpeakMimeType,
@@ -302,6 +304,48 @@ class TestAgentServices:
         result = await client.agent_run(request)
 
         assert isinstance(result, AgentResponse)
+
+    @pytest.mark.asyncio
+    async def test_agent_run_with_history(self, client, mock_httpx_client):
+        """Test agent run with conversation history."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "output": "Based on my search, here's what I found...",
+            "usage": {"input_tokens": 50, "output_tokens": 100},
+            "history": [
+                {"role": "user", "content": "Search for AI news"},
+                {"role": "tool_call", "tool_name": "web_search", "args": {"query": "AI news"}},
+                {"role": "tool_return", "tool_name": "web_search", "content": "AI news results..."},
+                {"role": "model", "content": "Based on my search, here's what I found..."},
+            ],
+        }
+        mock_httpx_client.post.return_value = mock_response
+
+        request = AgentRequest(
+            provider_uid="test-provider",
+            model="gpt-4",
+            messages=[TextMessage(role=MessageRole.USER, content="Search for AI news")],
+            tools=[WebSearchInput(kind=ToolKind.WEB_SEARCH, search_context_size="high")],
+            include_history=True,  # Enable history
+        )
+
+        result = await client.agent_run(request)
+
+        assert isinstance(result, AgentResponse)
+        assert result.output == "Based on my search, here's what I found..."
+        assert result.history is not None
+        assert len(result.history) == 4
+        
+        # Verify message types in history
+        assert isinstance(result.history[0], TextMessage)
+        assert result.history[0].role == "user"
+        assert isinstance(result.history[1], ToolCallMessage)
+        assert result.history[1].tool_name == "web_search"
+        assert isinstance(result.history[2], ToolReturnMessage)
+        assert result.history[2].tool_name == "web_search"
+        assert isinstance(result.history[3], TextMessage)
+        assert result.history[3].role == "model"
 
     @pytest.mark.asyncio
     async def test_agent_run_stream(self, client, mock_httpx_client):

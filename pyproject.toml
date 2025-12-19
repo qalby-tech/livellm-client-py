@@ -1,6 +1,6 @@
 [project]
 name = "livellm"
-version = "1.4.5"
+version = "1.5.1"
 description = "Python client for the LiveLLM Server"
 readme = "README.md"
 requires-python = ">=3.10"
