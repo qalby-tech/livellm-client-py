@@ -36,6 +36,7 @@ class BaseLivellmClient(ABC):
         model: str,
         messages: list,
         tools: Optional[list] = None,
+        include_history: bool = False,
         **kwargs
     ) -> AgentResponse:
         ...
@@ -53,6 +54,7 @@ class BaseLivellmClient(ABC):
         model: Optional[str] = None,
         messages: Optional[list] = None,
         tools: Optional[list] = None,
+        include_history: bool = False,
         **kwargs
     ) -> AgentResponse:
         """
@@ -69,7 +71,8 @@ class BaseLivellmClient(ABC):
                provider_uid="...",
                model="gpt-4",
                messages=[TextMessage(...)],
-               tools=[]
+               tools=[],
+               include_history=False
            )
         
         Args:
@@ -79,6 +82,7 @@ class BaseLivellmClient(ABC):
             messages: List of messages
             tools: Optional list of tools
             gen_config: Optional generation configuration
+            include_history: Whether to include full conversation history in the response
             
         Returns:
             AgentResponse with the agent's output
@@ -103,7 +107,8 @@ class BaseLivellmClient(ABC):
             model=model,
             messages=messages,
             tools=tools or [],
-            gen_config=kwargs or None
+            gen_config=kwargs or None,
+            include_history=include_history
         )
         return await self.handle_agent_run(agent_request)
     
@@ -122,6 +127,7 @@ class BaseLivellmClient(ABC):
         model: str,
         messages: list,
         tools: Optional[list] = None,
+        include_history: bool = False,
         **kwargs
     ) -> AsyncIterator[AgentResponse]:
         ...
@@ -139,6 +145,7 @@ class BaseLivellmClient(ABC):
         model: Optional[str] = None,
         messages: Optional[list] = None,
         tools: Optional[list] = None,
+        include_history: bool = False,
         **kwargs
     ) -> AsyncIterator[AgentResponse]:
         """
@@ -157,7 +164,8 @@ class BaseLivellmClient(ABC):
                provider_uid="...",
                model="gpt-4",
                messages=[TextMessage(...)],
-               tools=[]
+               tools=[],
+               include_history=False
            ):
                ...
         
@@ -168,6 +176,7 @@ class BaseLivellmClient(ABC):
             messages: List of messages
             tools: Optional list of tools
             gen_config: Optional generation configuration
+            include_history: Whether to include full conversation history in the response
             
         Returns:
             AsyncIterator of AgentResponse chunks
@@ -192,7 +201,8 @@ class BaseLivellmClient(ABC):
                 model=model,
                 messages=messages,
                 tools=tools or [],
-                gen_config=kwargs or None
+                gen_config=kwargs or None,
+                include_history=include_history
             )
             stream = self.handle_agent_run_stream(agent_request)
         
