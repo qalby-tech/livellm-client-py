@@ -880,7 +880,7 @@ class LivellmClient(BaseLivellmClient):
             with httpx.Client(base_url=self.base_url) as client:
                 for config in self.settings:
                     config: Settings = config
-                    client.delete("providers/config/{config.uid}", headers=self.headers)
+                    client.delete(f"providers/config/{config.uid}", headers=self.headers)
         except Exception:
             # Silently fail - we're in a destructor
             pass
