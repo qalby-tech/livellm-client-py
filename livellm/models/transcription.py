@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, field_validator
 from livellm.models.audio.speak import SpeakMimeType
 from typing import Optional
 import base64
+import datetime
 
 class TranscriptionInitWsRequest(BaseModel):
     provider_uid: str = Field(..., description="The provider uid")
@@ -33,3 +34,4 @@ class TranscriptionAudioChunkWsRequest(BaseModel):
 
 class TranscriptionWsResponse(BaseModel):
     transcription: str = Field(..., description="The transcription")
+    received_at: datetime = Field(default_factory=datetime.now, description="The datetime when the transcription was received")

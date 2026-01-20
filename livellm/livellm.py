@@ -3,9 +3,10 @@ import asyncio
 import httpx
 import json
 import warnings
-from typing import List, Optional, AsyncIterator, Union, overload, Dict
+from typing import List, Optional, AsyncIterator, Union, overload, Dict, Any, Type
 from .models.common import Settings, SuccessResponse
 from .models.agent.agent import AgentRequest, AgentResponse
+from .models.agent.output_schema import OutputSchema
 from .models.audio.speak import SpeakRequest, EncodedSpeakResponse
 from .models.audio.transcribe import TranscribeRequest, TranscribeResponse, File
 from .models.fallback import AgentFallbackRequest, AudioFallbackRequest, TranscribeFallbackRequest
@@ -15,9 +16,18 @@ from .transcripton import TranscriptionWsClient
 from uuid import uuid4
 import logging
 from abc import ABC, abstractmethod
+from importlib.metadata import version, PackageNotFoundError
+from pydantic import BaseModel
 
 
 logger = logging.getLogger(__name__)
+
+try:
+    __version__ = version("livellm")
+except PackageNotFoundError:
+    __version__ = "unknown"
+
+DEFAULT_USER_AGENT = f"livellm-python/{__version__}"
 
 class BaseLivellmClient(ABC):
 
@@ -37,6 +47,7 @@ class BaseLivellmClient(ABC):
         messages: list,
         tools: Optional[list] = None,
         include_history: bool = False,
+        output_schema: Optional[Union[OutputSchema, Dict[str, Any], Type[BaseModel]]] = None,
         **kwargs
     ) -> AgentResponse:
         ...
@@ -55,6 +66,7 @@ class BaseLivellmClient(ABC):
         messages: Optional[list] = None,
         tools: Optional[list] = None,
         include_history: bool = False,
+        output_schema: Optional[Union[OutputSchema, Dict[str, Any], Type[BaseModel]]] = None,
         **kwargs
     ) -> AgentResponse:
         """
@@ -72,7 +84,8 @@ class BaseLivellmClient(ABC):
                model="gpt-4",
                messages=[TextMessage(...)],
                tools=[],
-               include_history=False
+               include_history=False,
+               output_schema=MyPydanticModel  # or OutputSchema(...) or dict
            )
         
         Args:
@@ -83,9 +96,14 @@ class BaseLivellmClient(ABC):
             tools: Optional list of tools
             gen_config: Optional generation configuration
             include_history: Whether to include full conversation history in the response
+            output_schema: Optional schema for structured output. Can be:
+                - An OutputSchema instance
+                - A dict representing a JSON schema
+                - A Pydantic BaseModel class (will be converted to OutputSchema)
             
         Returns:
-            AgentResponse with the agent's output
+            AgentResponse with the agent's output. If output_schema was provided,
+            the response will include structured_output with the parsed JSON.
         """
         # Check if first argument is a request object
         if request is not None:
@@ -102,15 +120,38 @@ class BaseLivellmClient(ABC):
                 "Alternatively, pass an AgentRequest object as the first positional argument."
             )
         
+        # Convert output_schema if it's a Pydantic BaseModel class
+        resolved_schema = self._resolve_output_schema(output_schema)
+        
         agent_request = AgentRequest(
             provider_uid=provider_uid,
             model=model,
             messages=messages,
             tools=tools or [],
             gen_config=kwargs or None,
-            include_history=include_history
+            include_history=include_history,
+            output_schema=resolved_schema
         )
         return await self.handle_agent_run(agent_request)
+    
+    def _resolve_output_schema(
+        self, 
+        output_schema: Optional[Union[OutputSchema, Dict[str, Any], Type[BaseModel]]]
+    ) -> Optional[Union[OutputSchema, Dict[str, Any]]]:
+        """
+        Resolve the output_schema parameter to an OutputSchema or dict.
+        
+        If a Pydantic BaseModel class is provided, convert it to OutputSchema.
+        """
+        if output_schema is None:
+            return None
+        
+        # Check if it's a class (not an instance) that's a subclass of BaseModel
+        if isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
+            return OutputSchema.from_pydantic(output_schema)
+        
+        # Already an OutputSchema or dict, return as-is
+        return output_schema
     
     @overload
     def agent_run_stream(
@@ -128,6 +169,7 @@ class BaseLivellmClient(ABC):
         messages: list,
         tools: Optional[list] = None,
         include_history: bool = False,
+        output_schema: Optional[Union[OutputSchema, Dict[str, Any], Type[BaseModel]]] = None,
         **kwargs
     ) -> AsyncIterator[AgentResponse]:
         ...
@@ -146,6 +188,7 @@ class BaseLivellmClient(ABC):
         messages: Optional[list] = None,
         tools: Optional[list] = None,
         include_history: bool = False,
+        output_schema: Optional[Union[OutputSchema, Dict[str, Any], Type[BaseModel]]] = None,
         **kwargs
     ) -> AsyncIterator[AgentResponse]:
         """
@@ -165,7 +208,8 @@ class BaseLivellmClient(ABC):
                model="gpt-4",
                messages=[TextMessage(...)],
                tools=[],
-               include_history=False
+               include_history=False,
+               output_schema=MyPydanticModel  # or OutputSchema(...) or dict
            ):
                ...
         
@@ -177,9 +221,14 @@ class BaseLivellmClient(ABC):
             tools: Optional list of tools
             gen_config: Optional generation configuration
             include_history: Whether to include full conversation history in the response
+            output_schema: Optional schema for structured output. Can be:
+                - An OutputSchema instance
+                - A dict representing a JSON schema
+                - A Pydantic BaseModel class (will be converted to OutputSchema)
             
         Returns:
-            AsyncIterator of AgentResponse chunks
+            AsyncIterator of AgentResponse chunks. If output_schema was provided,
+            the final response will include structured_output with the parsed JSON.
         """
         # Check if first argument is a request object
         if request is not None:
@@ -196,13 +245,17 @@ class BaseLivellmClient(ABC):
                     "Alternatively, pass an AgentRequest object as the first positional argument."
                 )
             
+            # Convert output_schema if it's a Pydantic BaseModel class
+            resolved_schema = self._resolve_output_schema(output_schema)
+            
             agent_request = AgentRequest(
                 provider_uid=provider_uid,
                 model=model,
                 messages=messages,
                 tools=tools or [],
                 gen_config=kwargs or None,
-                include_history=include_history
+                include_history=include_history,
+                output_schema=resolved_schema
             )
             stream = self.handle_agent_run_stream(agent_request)
         
@@ -505,7 +558,8 @@ class LivellmWsClient(BaseLivellmClient):
 
     def __init__(
         self, 
-        base_url: str, 
+        base_url: str,
+        user_agent: Optional[str] = None,
         timeout: Optional[float] = None,
         max_size: Optional[int] = None,
         max_buffer_size: Optional[int] = None
@@ -523,6 +577,7 @@ class LivellmWsClient(BaseLivellmClient):
         self._ws_root_base_url = ws_url
         self.base_url = f"{ws_url}/livellm/ws"
         self.timeout = timeout
+        self.user_agent = user_agent or DEFAULT_USER_AGENT
         self.websocket = None
         self.sessions: Dict[str, asyncio.Queue] = {}
         self.max_buffer_size = max_buffer_size or 0 # None means unlimited buffer size
@@ -541,7 +596,8 @@ class LivellmWsClient(BaseLivellmClient):
             self.base_url, 
             open_timeout=self.timeout,
             close_timeout=self.timeout,
-            max_size=self.max_size
+            max_size=self.max_size,
+            additional_headers={"User-Agent": self.user_agent}
         )
         self.__listen_for_responses_task = asyncio.create_task(self.listen_for_responses())
                 
@@ -680,7 +736,8 @@ class LivellmClient(BaseLivellmClient):
 
     def __init__(
         self, 
-        base_url: str, 
+        base_url: str,
+        user_agent: Optional[str] = None,
         timeout: Optional[float] = None,
         configs: Optional[List[Settings]] = None
         ):
@@ -689,11 +746,13 @@ class LivellmClient(BaseLivellmClient):
         # HTTP API base URL for this client
         self.base_url = f"{self._root_base_url}/livellm"
         self.timeout = timeout
+        self.user_agent = user_agent or DEFAULT_USER_AGENT
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) \
             if self.timeout else httpx.AsyncClient(base_url=self.base_url)
         self.settings = []
         self.headers = {
             "Content-Type": "application/json",
+            "User-Agent": self.user_agent,
         }
         # Lazily-created realtime (WebSocket) client
         self._realtime = None
@@ -713,7 +772,7 @@ class LivellmClient(BaseLivellmClient):
         """
         if self._realtime is None:
             # Pass the same root base URL; LivellmWsClient will handle ws/wss conversion.
-            self._realtime = LivellmWsClient(self._root_base_url, timeout=self.timeout)
+            self._realtime = LivellmWsClient(self._root_base_url, user_agent=self.user_agent, timeout=self.timeout)
         return self._realtime
     
     def update_configs_post_init(self, configs: List[Settings]) -> SuccessResponse:
@@ -858,32 +917,32 @@ class LivellmClient(BaseLivellmClient):
         if self._realtime is not None:
             await self._realtime.disconnect()
         
-    def __del__(self):
-        """
-        Destructor to clean up resources when the client is garbage collected.
-        This will close the HTTP client and attempt to delete configs if cleanup wasn't called.
-        Note: It's recommended to use the async context manager or call cleanup() explicitly.
-        """
-        # Warn user if cleanup wasn't called
-        if self.settings:
-            warnings.warn(
-                "LivellmClient is being garbage collected without explicit cleanup. "
-                "Provider configs may not be deleted from the server. "
-                "Consider using 'async with' or calling 'await client.cleanup()' explicitly.",
-                ResourceWarning,
-                stacklevel=2
-            )
+    # def __del__(self):
+    #     """
+    #     Destructor to clean up resources when the client is garbage collected.
+    #     This will close the HTTP client and attempt to delete configs if cleanup wasn't called.
+    #     Note: It's recommended to use the async context manager or call cleanup() explicitly.
+    #     """
+    #     # Warn user if cleanup wasn't called
+    #     if self.settings:
+    #         warnings.warn(
+    #             "LivellmClient is being garbage collected without explicit cleanup. "
+    #             "Provider configs may not be deleted from the server. "
+    #             "Consider using 'async with' or calling 'await client.cleanup()' explicitly.",
+    #             ResourceWarning,
+    #             stacklevel=2
+    #         )
         
-        # Close the httpx client synchronously
-        # httpx.AsyncClient stores a sync Transport that needs cleanup
-        try:
-            with httpx.Client(base_url=self.base_url) as client:
-                for config in self.settings:
-                    config: Settings = config
-                    client.delete(f"providers/config/{config.uid}", headers=self.headers)
-        except Exception:
-            # Silently fail - we're in a destructor
-            pass
+    #     # Close the httpx client synchronously
+    #     # httpx.AsyncClient stores a sync Transport that needs cleanup
+    #     try:
+    #         with httpx.Client(base_url=self.base_url) as client:
+    #             for config in self.settings:
+    #                 config: Settings = config
+    #                 client.delete(f"providers/config/{config.uid}", headers=self.headers)
+    #     except Exception:
+    #         # Silently fail - we're in a destructor
+    #         pass
 
     # Implement abstract methods from BaseLivellmClient
     

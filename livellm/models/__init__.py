@@ -3,6 +3,7 @@ from .fallback import AgentFallbackRequest, AudioFallbackRequest, TranscribeFall
 from .agent.agent import AgentRequest, AgentResponse, AgentResponseUsage
 from .agent.chat import Message, MessageRole, TextMessage, BinaryMessage, ToolCallMessage, ToolReturnMessage
 from .agent.tools import Tool, ToolInput, ToolKind, WebSearchInput, MCPStreamableServerInput
+from .agent.output_schema import OutputSchema, PropertyDef
 from .audio.speak import SpeakMimeType, SpeakRequest, SpeakStreamResponse
 from .audio.transcribe import TranscribeRequest, TranscribeResponse, File
 from .transcription import TranscriptionInitWsRequest, TranscriptionAudioChunkWsRequest, TranscriptionWsResponse
@@ -34,6 +35,8 @@ __all__ = [
     "ToolKind",
     "WebSearchInput",
     "MCPStreamableServerInput",
+    "OutputSchema",
+    "PropertyDef",
     # Audio
     "SpeakMimeType",
     "SpeakRequest",

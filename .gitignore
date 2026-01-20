@@ -4,3 +4,4 @@ __pycache__
 
 .coverage
 test.py
+test_*.py

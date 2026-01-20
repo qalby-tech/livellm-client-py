@@ -1,6 +1,7 @@
 from .agent import AgentRequest, AgentResponse, AgentResponseUsage
 from .chat import Message, MessageRole, TextMessage, BinaryMessage, ToolCallMessage, ToolReturnMessage
 from .tools import Tool, ToolInput, ToolKind, WebSearchInput, MCPStreamableServerInput
+from .output_schema import OutputSchema, PropertyDef
 
 
 __all__ = [
@@ -18,4 +19,6 @@ __all__ = [
     "ToolKind",
     "WebSearchInput",
     "MCPStreamableServerInput",
+    "OutputSchema",
+    "PropertyDef",
 ]
