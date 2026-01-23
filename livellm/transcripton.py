@@ -47,7 +47,7 @@ class TranscriptionWsClient:
         self, 
         request: TranscriptionInitWsRequest, 
         source: AsyncIterator[TranscriptionAudioChunkWsRequest]
-    ) -> AsyncIterator[TranscriptionWsResponse]:
+    ) -> AsyncIterator[list[TranscriptionWsResponse]]:
         """
         Start a transcription session.
         
@@ -56,7 +56,10 @@ class TranscriptionWsClient:
             source: An async iterator that yields audio chunks to transcribe.
             
         Returns:
-            An async iterator of transcription session responses.
+            An async iterator that yields lists of transcription responses.
+            Each list contains all responses that accumulated since the last yield,
+            ordered from oldest to newest (last element is the most recent).
+            This prevents slow processing from stalling the entire loop.
             
         Example:
             ```python
@@ -66,8 +69,14 @@ class TranscriptionWsClient:
                         yield TranscriptionAudioChunkWsRequest(audio=chunk)
             
             async with TranscriptionWsClient(url) as client:
-                async for response in client.start_session(init_request, audio_source()):
-                    print(response.transcription)
+                async for responses in client.start_session(init_request, audio_source()):
+                    # responses is a list, newest transcription is last
+                    latest = responses[-1]
+                    print(f"Latest: {latest.transcription}")
+                    
+                    # Process all transcriptions if needed
+                    for resp in responses:
+                        print(resp.transcription)
             ```
         """
         # Send initialization request as JSON
@@ -78,6 +87,10 @@ class TranscriptionWsClient:
         init_response = TranscriptionInitWsResponse(**json.loads(response_data))
         if not init_response.success:
             raise Exception(f"Failed to start transcription session: {init_response.error}")
+
+        # Queue to collect incoming transcription responses
+        response_queue: asyncio.Queue[TranscriptionWsResponse | None] = asyncio.Queue()
+        receiver_done = False
 
         # Start sending audio chunks in background
         async def send_chunks():
@@ -93,23 +106,52 @@ class TranscriptionWsClient:
                 await self.websocket.close()
                 raise e
         
-        send_task = asyncio.create_task(send_chunks())
+        # Receive transcription responses in background
+        async def receive_responses():
+            nonlocal receiver_done
+            try:
+                while True:
+                    try:
+                        response_data = await self.websocket.recv()
+                        transcription_response = TranscriptionWsResponse(**json.loads(response_data))
+                        await response_queue.put(transcription_response)
+                    except websockets.ConnectionClosed:
+                        break
+            finally:
+                receiver_done = True
+                await response_queue.put(None)  # Signal end of stream
         
-        # Receive transcription responses
+        send_task = asyncio.create_task(send_chunks())
+        receive_task = asyncio.create_task(receive_responses())
+        
         try:
-            while True:
-                try:
-                    response_data = await self.websocket.recv()
-                    transcription_response = TranscriptionWsResponse(**json.loads(response_data))
-                    yield transcription_response
-                except websockets.ConnectionClosed:
-                    # Connection closed, stop receiving
+            while True:                
+                # Wait for at least one response
+                first_response = await response_queue.get()
+                if first_response is None:
+                    # End of stream
                     break
+                
+                # Collect all additional responses that have accumulated (non-blocking)
+                responses = [first_response]
+                while True:
+                    try:
+                        additional = response_queue.get_nowait()
+                        if additional is None:
+                            # End of stream, yield what we have and exit
+                            yield responses
+                            return
+                        responses.append(additional)
+                    except asyncio.QueueEmpty:
+                        break
+                
+                yield responses
         finally:
-            # Cancel the send task if still running
-            if not send_task.done():
-                send_task.cancel()
-                try:
-                    await send_task
-                except asyncio.CancelledError:
-                    pass
+            # Cancel tasks if still running
+            for task in [send_task, receive_task]:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass

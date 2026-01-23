@@ -312,7 +312,7 @@ wheels = [
 
 [[package]]
 name = "livellm"
-version = "1.5.5"
+version = "1.6.1"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

@@ -103,7 +103,7 @@ class BaseLivellmClient(ABC):
             
         Returns:
             AgentResponse with the agent's output. If output_schema was provided,
-            the response will include structured_output with the parsed JSON.
+            the output will be a JSON string matching the schema.
         """
         # Check if first argument is a request object
         if request is not None:
@@ -228,7 +228,7 @@ class BaseLivellmClient(ABC):
             
         Returns:
             AsyncIterator of AgentResponse chunks. If output_schema was provided,
-            the final response will include structured_output with the parsed JSON.
+            the output will be a JSON string matching the schema.
         """
         # Check if first argument is a request object
         if request is not None:

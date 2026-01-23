@@ -1,11 +1,13 @@
 """Output schema models for structured output support."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Dict, Any, Union
 
 
 class PropertyDef(BaseModel):
     """Definition of a property in the output schema."""
+    model_config = ConfigDict(extra="allow")
+    
     type: Union[str, List[str]] = Field(..., description="Property type: string, integer, number, boolean, array, object, null")
     description: Optional[str] = Field(default=None, description="Description of the property")
     enum: Optional[List[Any]] = Field(default=None, description="Allowed values for the property")
@@ -29,9 +31,6 @@ class PropertyDef(BaseModel):
     required: Optional[List[str]] = Field(default=None, description="Required properties for nested objects")
     additionalProperties: Optional[Union[bool, "PropertyDef", Dict[str, Any]]] = Field(default=None, description="Schema for additional properties")
 
-    class Config:
-        extra = "allow"  # Allow additional JSON Schema properties
-
 
 class OutputSchema(BaseModel):
     """
@@ -51,14 +50,13 @@ class OutputSchema(BaseModel):
             required=["name", "age"]
         )
     """
+    model_config = ConfigDict(extra="allow")
+    
     title: str = Field(..., description="Name of the schema, used as the output tool name")
     description: Optional[str] = Field(default=None, description="Description to help the model understand what to output")
     properties: Dict[str, Union[PropertyDef, Dict[str, Any]]] = Field(..., description="Dictionary of property definitions")
     required: Optional[List[str]] = Field(default=None, description="List of required property names")
     additionalProperties: Optional[Union[bool, PropertyDef, Dict[str, Any]]] = Field(default=None, description="Whether extra properties are allowed")
-
-    class Config:
-        extra = "allow"  # Allow additional JSON Schema properties
 
     @classmethod
     def from_pydantic(cls, model: type[BaseModel]) -> "OutputSchema":

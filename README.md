@@ -12,6 +12,7 @@ Python client library for the LiveLLM Server - a unified proxy for AI agent, aud
 - 🎯 **Multi-provider** - OpenAI, Google, Anthropic, Groq, ElevenLabs
 - 🔄 **Streaming** - Real-time streaming for agent and audio
 - 🛠️ **Flexible API** - Use request objects or keyword arguments
+- 📋 **Structured Output** - Get validated JSON responses with schema support (Pydantic, OutputSchema, or dict)
 - 🎙️ **Audio services** - Text-to-speech and transcription
 - 🎤 **Real-Time Transcription** - WebSocket-based live audio transcription with bidirectional streaming
 - ⚡ **Fallback strategies** - Sequential and parallel handling
@@ -275,6 +276,146 @@ if response.history:
 - Auditing and logging complete conversations
 - Building conversational UIs with full context visibility
 
+#### Agent with Structured Output
+
+Get structured JSON responses from the agent by providing an output schema. The agent will return a JSON string matching your schema in the `output` field.
+
+**Three ways to define a schema:**
+
+**1. Using Pydantic BaseModel (Recommended)**
+```python
+import json
+from pydantic import BaseModel
+from livellm.models import TextMessage
+
+class Person(BaseModel):
+    name: str
+    age: int
+    occupation: str
+
+response = await client.agent_run(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[TextMessage(role="user", content="Extract info: John is a 28-year-old engineer")],
+    output_schema=Person  # Pass the BaseModel class directly
+)
+
+# response.output is a JSON string: '{"name": "John", "age": 28, "occupation": "engineer"}'
+print(type(response.output))  # <class 'str'>
+
+# Parse the JSON string yourself if needed
+data = json.loads(response.output)
+print(f"Name: {data['name']}")
+print(f"Age: {data['age']}")
+print(f"Occupation: {data['occupation']}")
+
+# Or validate with your Pydantic model
+person = Person.model_validate_json(response.output)
+print(f"Name: {person.name}")
+```
+
+**2. Using OutputSchema**
+```python
+from livellm.models import OutputSchema, PropertyDef, TextMessage
+
+schema = OutputSchema(
+    title="Person",
+    description="A person's information",
+    properties={
+        "name": PropertyDef(type="string", description="The person's name"),
+        "age": PropertyDef(type="integer", minimum=0, maximum=150, description="Age in years"),
+        "email": PropertyDef(type="string", pattern="^[^@]+@[^@]+\\.[^@]+$", description="Email address"),
+    },
+    required=["name", "age", "email"]
+)
+
+response = await client.agent_run(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[TextMessage(role="user", content="Tell me about a person")],
+    output_schema=schema
+)
+```
+
+**3. Using a dictionary (JSON Schema)**
+```python
+schema_dict = {
+    "title": "Person",
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "description": "The person's name"},
+        "age": {"type": "integer", "minimum": 0, "maximum": 150},
+        "email": {"type": "string", "pattern": "^[^@]+@[^@]+\\.[^@]+$"}
+    },
+    "required": ["name", "age", "email"]
+}
+
+response = await client.agent_run(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[TextMessage(role="user", content="Extract person info")],
+    output_schema=schema_dict
+)
+```
+
+**Complex nested schemas:**
+```python
+from pydantic import BaseModel
+from typing import List, Optional
+
+class Address(BaseModel):
+    street: str
+    city: str
+    zip_code: str
+
+class Person(BaseModel):
+    name: str
+    age: int
+    addresses: List[Address]
+    phone: Optional[str] = None
+
+response = await client.agent_run(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[TextMessage(role="user", content="Extract person with addresses")],
+    output_schema=Person  # Nested models are automatically resolved
+)
+```
+
+**With streaming:**
+```python
+from pydantic import BaseModel
+
+class Summary(BaseModel):
+    title: str
+    key_points: List[str]
+    word_count: int
+
+stream = client.agent_run_stream(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[TextMessage(role="user", content="Summarize this article")],
+    output_schema=Summary
+)
+
+async for chunk in stream:
+    print(chunk.output, end="", flush=True)
+
+# After streaming completes, parse the full JSON output
+full_output = "".join([chunk.output async for chunk in stream])
+data = json.loads(full_output)
+```
+
+**Response fields:**
+- `output` - The JSON string response matching your schema
+
+**Use cases:**
+- Data extraction and parsing
+- API response formatting
+- Structured data generation
+- Type-safe responses
+- Integration with type-checked code
+
 ### Audio Services
 
 #### Text-to-Speech
@@ -384,11 +525,17 @@ async def transcribe_live_direct():
         )
 
         # Stream audio and receive transcriptions
-        async for response in client.start_session(init_request, audio_source()):
-            print(f"Transcription: {response.transcription}")
-            if response.is_end:
-                print("Transcription complete!")
-                break
+        # Each iteration yields a list of responses (oldest to newest)
+        async for responses in client.start_session(init_request, audio_source()):
+            # Get the latest transcription (last element)
+            latest = responses[-1]
+            print(f"Latest transcription: {latest.transcription}")
+            
+            # Process all accumulated transcriptions if needed
+            if len(responses) > 1:
+                print(f"  (received {len(responses)} chunks)")
+                for resp in responses:
+                    print(f"    - {resp.transcription}")
 
 asyncio.run(transcribe_live_direct())
 ```
@@ -426,24 +573,24 @@ async def transcribe_and_chat():
                 gen_config={},
             )
 
-            # Listen for transcriptions and, for each chunk, run an agent request
-            async for resp in t_client.start_session(init_request, audio_source()):
-                print("User said:", resp.transcription)
+            # Listen for transcriptions and, for each batch, run an agent request
+            # Each iteration yields a list of responses - newest is last
+            async for responses in t_client.start_session(init_request, audio_source()):
+                # Use the latest transcription for the agent
+                latest = responses[-1]
+                print("User said:", latest.transcription)
 
                 # You can call agent_run (or speak, etc.) while the transcription stream is active
+                # Even if this is slow, transcriptions accumulate and won't stall the loop
                 agent_response = await realtime.agent_run(
                     provider_uid="openai",
                     model="gpt-4",
                     messages=[
-                        TextMessage(role="user", content=resp.transcription),
+                        TextMessage(role="user", content=latest.transcription),
                     ],
                     temperature=0.7,
                 )
                 print("Agent:", agent_response.output)
-
-                if resp.is_end:
-                    print("Transcription session complete")
-                    break
 
 asyncio.run(transcribe_and_chat())
 ```
@@ -559,7 +706,7 @@ response = await client.ping()
 **Real-Time Transcription (TranscriptionWsClient)**
 - `connect()` - Establish WebSocket connection
 - `disconnect()` - Close WebSocket connection
-- `start_session(init_request, audio_source)` - Start bidirectional streaming transcription
+- `start_session(init_request, audio_source)` - Start bidirectional streaming transcription; yields `list[TranscriptionWsResponse]` (accumulated responses, newest last)
 - `async with client:` - Auto connection management (recommended)
 
 **Cleanup**
@@ -580,7 +727,7 @@ response = await client.ping()
 - `MessageRole` - `USER` | `MODEL` | `SYSTEM` | `TOOL_CALL` | `TOOL_RETURN` (or use strings)
 
 **Requests**
-- `AgentRequest(provider_uid, model, messages, tools?, gen_config?, include_history?)` - Set `include_history=True` to get full conversation
+- `AgentRequest(provider_uid, model, messages, tools?, gen_config?, include_history?, output_schema?)` - Set `include_history=True` to get full conversation. Set `output_schema` for structured JSON output.
 - `SpeakRequest(provider_uid, model, text, voice, mime_type, sample_rate, gen_config?)`
 - `TranscribeRequest(provider_uid, file, model, language?, gen_config?)`
 - `TranscriptionInitWsRequest(provider_uid, model, language?, input_sample_rate?, input_audio_format?, gen_config?)`
@@ -590,15 +737,20 @@ response = await client.ping()
 - `WebSearchInput(kind=ToolKind.WEB_SEARCH, search_context_size)`
 - `MCPStreamableServerInput(kind=ToolKind.MCP_STREAMABLE_SERVER, url, prefix?, timeout?)`
 
+**Structured Output**
+- `OutputSchema(title, description?, properties, required?, additionalProperties?)` - JSON Schema for structured output
+- `PropertyDef(type, description?, enum?, default?, minLength?, maxLength?, pattern?, minimum?, maximum?, items?, ...)` - Property definition with validation constraints
+- `OutputSchema.from_pydantic(model)` - Convert a Pydantic BaseModel class to OutputSchema
+
 **Fallback**
 - `AgentFallbackRequest(strategy, requests, timeout_per_request?)`
 - `AudioFallbackRequest(strategy, requests, timeout_per_request?)`
 - `FallbackStrategy` - `SEQUENTIAL` | `PARALLEL`
 
 **Responses**
-- `AgentResponse(output, usage{input_tokens, output_tokens}, history?)` - `history` included when `include_history=True`
+- `AgentResponse(output, usage{input_tokens, output_tokens}, history?)` - `history` included when `include_history=True`. `output` is a JSON string when `output_schema` is provided.
 - `TranscribeResponse(text, language)`
-- `TranscriptionWsResponse(transcription, is_end)` - Real-time transcription result
+- `TranscriptionWsResponse(transcription, received_at)` - Real-time transcription result; yielded as `list[TranscriptionWsResponse]` with newest last
 
 ## Error Handling
 
