@@ -1,6 +1,6 @@
 from .common import BaseRequest, ProviderKind, Settings, SuccessResponse
 from .fallback import AgentFallbackRequest, AudioFallbackRequest, TranscribeFallbackRequest, FallbackStrategy
-from .agent.agent import AgentRequest, AgentResponse, AgentResponseUsage
+from .agent.agent import AgentRequest, AgentResponse, AgentResponseUsage, ContextOverflowStrategy
 from .agent.chat import Message, MessageRole, TextMessage, BinaryMessage, ToolCallMessage, ToolReturnMessage
 from .agent.tools import Tool, ToolInput, ToolKind, WebSearchInput, MCPStreamableServerInput
 from .agent.output_schema import OutputSchema, PropertyDef
@@ -24,6 +24,7 @@ __all__ = [
     "AgentRequest",
     "AgentResponse",
     "AgentResponseUsage",
+    "ContextOverflowStrategy",
     "Message",
     "MessageRole",
     "TextMessage",

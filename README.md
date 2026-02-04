@@ -13,6 +13,8 @@ Python client library for the LiveLLM Server - a unified proxy for AI agent, aud
 - 🔄 **Streaming** - Real-time streaming for agent and audio
 - 🛠️ **Flexible API** - Use request objects or keyword arguments
 - 📋 **Structured Output** - Get validated JSON responses with schema support (Pydantic, OutputSchema, or dict)
+- 📏 **Context Overflow Management** - Automatic handling of large texts with truncate/recycle strategies
+- ⏱️ **Per-Request Timeout** - Override default timeout for individual requests
 - 🎙️ **Audio services** - Text-to-speech and transcription
 - 🎤 **Real-Time Transcription** - WebSocket-based live audio transcription with bidirectional streaming
 - ⚡ **Fallback strategies** - Sequential and parallel handling
@@ -72,10 +74,10 @@ from livellm.models import Settings, ProviderKind
 # Basic
 client = LivellmClient(base_url="http://localhost:8000")
 
-# With timeout and pre-configured providers
+# With default timeout and pre-configured providers
 client = LivellmClient(
     base_url="http://localhost:8000",
-    timeout=30.0,
+    timeout=30.0,  # Default timeout for all requests
     configs=[
         Settings(
             uid="openai",
@@ -90,6 +92,50 @@ client = LivellmClient(
             blacklist_models=["claude-instant-1"]  # Optional
         )
     ]
+)
+```
+
+### Per-Request Timeout Override
+
+The timeout provided in `__init__` is the default, but you can override it for individual requests:
+
+```python
+# Client with 30s default timeout
+client = LivellmClient(base_url="http://localhost:8000", timeout=30.0)
+
+# Uses default 30s timeout
+response = await client.agent_run(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[TextMessage(role="user", content="Hello")]
+)
+
+# Override with 120s timeout for this specific request
+response = await client.agent_run(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[TextMessage(role="user", content="Write a long essay...")],
+    timeout=120.0  # Override for this request only
+)
+
+# Works with streaming too
+async for chunk in client.agent_run_stream(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[TextMessage(role="user", content="Tell me a story")],
+    timeout=300.0  # 5 minutes for streaming
+):
+    print(chunk.output, end="")
+
+# Works with all methods: speak(), speak_stream(), transcribe(), etc.
+audio = await client.speak(
+    provider_uid="openai",
+    model="tts-1",
+    text="Hello world",
+    voice="alloy",
+    mime_type=SpeakMimeType.MP3,
+    sample_rate=24000,
+    timeout=60.0
 )
 ```
 
@@ -416,6 +462,73 @@ data = json.loads(full_output)
 - Type-safe responses
 - Integration with type-checked code
 
+#### Context Overflow Management
+
+Handle large texts that exceed model context windows with automatic truncation or iterative processing:
+
+```python
+from livellm.models import TextMessage, ContextOverflowStrategy, OutputSchema, PropertyDef
+
+# TRUNCATE strategy (default): Preserves beginning, middle, and end
+# Works with both streaming and non-streaming
+response = await client.agent_run(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[
+        TextMessage(role="system", content="Summarize the document."),
+        TextMessage(role="user", content=very_long_document)
+    ],
+    context_limit=4000,  # Max tokens
+    context_overflow_strategy=ContextOverflowStrategy.TRUNCATE
+)
+
+# RECYCLE strategy: Iteratively processes chunks and merges results
+# Useful for extraction tasks - processes entire document
+# Requires output_schema for JSON merging
+output_schema = OutputSchema(
+    title="ExtractedInfo",
+    properties={
+        "topics": PropertyDef(type="array", items={"type": "string"}),
+        "key_figures": PropertyDef(type="array", items={"type": "string"})
+    },
+    required=["topics", "key_figures"]
+)
+
+response = await client.agent_run(
+    provider_uid="openai",
+    model="gpt-4",
+    messages=[
+        TextMessage(role="system", content="Extract all topics and key figures."),
+        TextMessage(role="user", content=very_long_document)
+    ],
+    context_limit=3000,
+    context_overflow_strategy=ContextOverflowStrategy.RECYCLE,
+    output_schema=output_schema
+)
+
+# Parse the merged results
+import json
+result = json.loads(response.output)
+print(f"Topics: {result['topics']}")
+print(f"Key figures: {result['key_figures']}")
+```
+
+**Strategy comparison:**
+
+| Strategy | How it works | Best for | Streaming |
+|----------|--------------|----------|-----------|
+| `TRUNCATE` | Takes beginning, middle, end portions | Summarization, Q&A | ✅ Yes |
+| `RECYCLE` | Processes chunks iteratively, merges JSON | Full document extraction | ❌ No |
+
+**Parameters:**
+- `context_limit` (int, default: 0) - Maximum tokens. If ≤ 0, overflow handling is disabled
+- `context_overflow_strategy` (ContextOverflowStrategy, default: TRUNCATE) - Strategy to use
+
+**Notes:**
+- System prompts are always preserved (never truncated)
+- Token counting includes a 20% safety buffer
+- RECYCLE requires `output_schema` for JSON merging
+
 ### Audio Services
 
 #### Text-to-Speech
@@ -688,20 +801,22 @@ response = await client.ping()
 
 ### Client Methods
 
+All methods accept an optional `timeout` parameter to override the default client timeout.
+
 **Configuration**
-- `ping()` - Health check
-- `update_config(config)` / `update_configs(configs)` - Add/update providers
-- `get_configs()` - List all configurations
-- `delete_config(uid)` - Remove provider
+- `ping(timeout?)` - Health check
+- `update_config(config, timeout?)` / `update_configs(configs, timeout?)` - Add/update providers
+- `get_configs(timeout?)` - List all configurations
+- `delete_config(uid, timeout?)` - Remove provider
 
 **Agent**
-- `agent_run(request | **kwargs)` - Run agent (blocking)
-- `agent_run_stream(request | **kwargs)` - Run agent (streaming)
+- `agent_run(request | **kwargs, timeout?)` - Run agent (blocking)
+- `agent_run_stream(request | **kwargs, timeout?)` - Run agent (streaming)
 
 **Audio**
-- `speak(request | **kwargs)` - Text-to-speech (blocking)
-- `speak_stream(request | **kwargs)` - Text-to-speech (streaming)
-- `transcribe(request | **kwargs)` - Speech-to-text
+- `speak(request | **kwargs, timeout?)` - Text-to-speech (blocking)
+- `speak_stream(request | **kwargs, timeout?)` - Text-to-speech (streaming)
+- `transcribe(request | **kwargs, timeout?)` - Speech-to-text
 
 **Real-Time Transcription (TranscriptionWsClient)**
 - `connect()` - Establish WebSocket connection
@@ -727,11 +842,14 @@ response = await client.ping()
 - `MessageRole` - `USER` | `MODEL` | `SYSTEM` | `TOOL_CALL` | `TOOL_RETURN` (or use strings)
 
 **Requests**
-- `AgentRequest(provider_uid, model, messages, tools?, gen_config?, include_history?, output_schema?)` - Set `include_history=True` to get full conversation. Set `output_schema` for structured JSON output.
+- `AgentRequest(provider_uid, model, messages, tools?, gen_config?, include_history?, output_schema?, context_limit?, context_overflow_strategy?)` - Set `include_history=True` to get full conversation. Set `output_schema` for structured JSON output. Set `context_limit` and `context_overflow_strategy` for handling large texts.
 - `SpeakRequest(provider_uid, model, text, voice, mime_type, sample_rate, gen_config?)`
 - `TranscribeRequest(provider_uid, file, model, language?, gen_config?)`
 - `TranscriptionInitWsRequest(provider_uid, model, language?, input_sample_rate?, input_audio_format?, gen_config?)`
 - `TranscriptionAudioChunkWsRequest(audio)` - Audio chunk for streaming
+
+**Context Overflow**
+- `ContextOverflowStrategy` - `TRUNCATE` | `RECYCLE`
 
 **Tools**
 - `WebSearchInput(kind=ToolKind.WEB_SEARCH, search_context_size)`
