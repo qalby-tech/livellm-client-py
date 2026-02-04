@@ -5,7 +5,7 @@ import json
 import warnings
 from typing import List, Optional, AsyncIterator, Union, overload, Dict, Any, Type
 from .models.common import Settings, SuccessResponse
-from .models.agent.agent import AgentRequest, AgentResponse
+from .models.agent.agent import AgentRequest, AgentResponse, ContextOverflowStrategy
 from .models.agent.output_schema import OutputSchema
 from .models.audio.speak import SpeakRequest, EncodedSpeakResponse
 from .models.audio.transcribe import TranscribeRequest, TranscribeResponse, File
@@ -53,6 +53,8 @@ class BaseLivellmClient(ABC):
         tools: Optional[list] = None,
         include_history: bool = False,
         output_schema: Optional[Union[OutputSchema, Dict[str, Any], Type[BaseModel]]] = None,
+        context_limit: int = 0,
+        context_overflow_strategy: ContextOverflowStrategy = ContextOverflowStrategy.TRUNCATE,
         timeout: Optional[float] = None,
         **kwargs
     ) -> AgentResponse:
@@ -77,6 +79,8 @@ class BaseLivellmClient(ABC):
         tools: Optional[list] = None,
         include_history: bool = False,
         output_schema: Optional[Union[OutputSchema, Dict[str, Any], Type[BaseModel]]] = None,
+        context_limit: int = 0,
+        context_overflow_strategy: ContextOverflowStrategy = ContextOverflowStrategy.TRUNCATE,
         timeout: Optional[float] = None,
         **kwargs
     ) -> AgentResponse:
@@ -111,6 +115,8 @@ class BaseLivellmClient(ABC):
                 - An OutputSchema instance
                 - A dict representing a JSON schema
                 - A Pydantic BaseModel class (will be converted to OutputSchema)
+            context_limit: Maximum context size in tokens. If <= 0, context overflow handling is disabled.
+            context_overflow_strategy: Strategy for handling context overflow: 'truncate' or 'recycle'
             timeout: Optional timeout in seconds (overrides default client timeout)
             
         Returns:
@@ -142,7 +148,9 @@ class BaseLivellmClient(ABC):
             tools=tools or [],
             gen_config=kwargs or None,
             include_history=include_history,
-            output_schema=resolved_schema
+            output_schema=resolved_schema,
+            context_limit=context_limit,
+            context_overflow_strategy=context_overflow_strategy
         )
         return await self.handle_agent_run(agent_request, timeout=timeout)
     
@@ -184,6 +192,8 @@ class BaseLivellmClient(ABC):
         tools: Optional[list] = None,
         include_history: bool = False,
         output_schema: Optional[Union[OutputSchema, Dict[str, Any], Type[BaseModel]]] = None,
+        context_limit: int = 0,
+        context_overflow_strategy: ContextOverflowStrategy = ContextOverflowStrategy.TRUNCATE,
         timeout: Optional[float] = None,
         **kwargs
     ) -> AsyncIterator[AgentResponse]:
@@ -208,6 +218,8 @@ class BaseLivellmClient(ABC):
         tools: Optional[list] = None,
         include_history: bool = False,
         output_schema: Optional[Union[OutputSchema, Dict[str, Any], Type[BaseModel]]] = None,
+        context_limit: int = 0,
+        context_overflow_strategy: ContextOverflowStrategy = ContextOverflowStrategy.TRUNCATE,
         timeout: Optional[float] = None,
         **kwargs
     ) -> AsyncIterator[AgentResponse]:
@@ -245,6 +257,8 @@ class BaseLivellmClient(ABC):
                 - An OutputSchema instance
                 - A dict representing a JSON schema
                 - A Pydantic BaseModel class (will be converted to OutputSchema)
+            context_limit: Maximum context size in tokens. If <= 0, context overflow handling is disabled.
+            context_overflow_strategy: Strategy for handling context overflow: 'truncate' or 'recycle'
             timeout: Optional timeout in seconds (overrides default client timeout)
             
         Returns:
@@ -276,7 +290,9 @@ class BaseLivellmClient(ABC):
                 tools=tools or [],
                 gen_config=kwargs or None,
                 include_history=include_history,
-                output_schema=resolved_schema
+                output_schema=resolved_schema,
+                context_limit=context_limit,
+                context_overflow_strategy=context_overflow_strategy
             )
             stream = self.handle_agent_run_stream(agent_request, timeout=timeout)
         
