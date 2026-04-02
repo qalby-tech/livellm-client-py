@@ -2,6 +2,7 @@
 import asyncio
 import httpx
 import json
+import random
 import warnings
 from typing import List, Optional, AsyncIterator, Union, overload, Dict, Any, Type
 from .models.common import Settings, SuccessResponse
@@ -626,7 +627,10 @@ class LivellmWsClient(BaseLivellmClient):
         user_agent: Optional[str] = None,
         timeout: Optional[float] = None,
         max_size: Optional[int] = None,
-        max_buffer_size: Optional[int] = None
+        max_buffer_size: Optional[int] = None,
+        max_reconnect_attempts: int = 5,
+        reconnect_base_delay: float = 1.0,
+        reconnect_max_delay: float = 30.0
     ):
         # Convert HTTP(S) URL to WS(S) URL
         base_url = base_url.rstrip("/")
@@ -651,6 +655,13 @@ class LivellmWsClient(BaseLivellmClient):
 
         self.__listen_for_responses_task = None
         
+        # Reconnection settings
+        self._max_reconnect_attempts = max_reconnect_attempts
+        self._reconnect_base_delay = reconnect_base_delay
+        self._reconnect_max_delay = reconnect_max_delay
+        self._reconnect_attempt = 0
+        self._reconnect_lock = asyncio.Lock()
+        
     async def connect(self):
         """Establish WebSocket connection."""
         if self.websocket is not None:
@@ -667,15 +678,102 @@ class LivellmWsClient(BaseLivellmClient):
                 
         return self.websocket
     
+    def _calculate_reconnect_delay(self) -> float:
+        """Calculate delay for next reconnection attempt using exponential backoff with jitter."""
+        delay = min(
+            self._reconnect_base_delay * (2 ** self._reconnect_attempt),
+            self._reconnect_max_delay
+        )
+        # Add jitter (50-100% of calculated delay) to prevent thundering herd
+        delay = delay * (0.5 + random.random())
+        return delay
+    
+    async def _reconnect(self) -> bool:
+        """
+        Attempt to reconnect the WebSocket with exponential backoff.
+        
+        Uses a lock to prevent concurrent reconnection attempts from multiple
+        coroutines.
+        
+        Returns:
+            True if reconnection was successful, False if max attempts exceeded.
+        """
+        async with self._reconnect_lock:
+            # Check if already reconnected by another coroutine while waiting for lock
+            if self.websocket is not None:
+                return True
+            
+            # Clean up existing connection
+            if self.websocket is not None:
+                try:
+                    await self.websocket.close()
+                except Exception:
+                    pass
+                self.websocket = None
+            
+            if self.__listen_for_responses_task is not None:
+                self.__listen_for_responses_task.cancel()
+                try:
+                    await self.__listen_for_responses_task
+                except asyncio.CancelledError:
+                    pass
+                self.__listen_for_responses_task = None
+            
+            # Attempt reconnection with exponential backoff
+            while self._reconnect_attempt < self._max_reconnect_attempts:
+                self._reconnect_attempt += 1
+                delay = self._calculate_reconnect_delay()
+                logger.info(f"WebSocket reconnecting (attempt {self._reconnect_attempt}/{self._max_reconnect_attempts}) in {delay:.1f}s...")
+                
+                await asyncio.sleep(delay)
+                
+                try:
+                    self.websocket = await websockets.connect(
+                        self.base_url,
+                        open_timeout=self.timeout,
+                        close_timeout=self.timeout,
+                        max_size=self.max_size,
+                        additional_headers={"User-Agent": self.user_agent}
+                    )
+                    self.__listen_for_responses_task = asyncio.create_task(self.listen_for_responses())
+                    self._reconnect_attempt = 0
+                    logger.info("WebSocket reconnected successfully")
+                    return True
+                except Exception as e:
+                    logger.warning(f"WebSocket reconnection attempt {self._reconnect_attempt} failed: {e}")
+            
+            logger.error(f"WebSocket failed to reconnect after {self._max_reconnect_attempts} attempts")
+            return False
+    
     async def listen_for_responses(self):
+        """Listen for incoming WebSocket responses and route them to session queues."""
         while True:
-            response_data = await self.websocket.recv()
-            response = WsResponse(**json.loads(response_data))            
             try:
-                self.sessions[response.session_id].put_nowait(response)
-            except asyncio.QueueFull:
-                self.sessions[response.session_id].get_nowait()
-                logger.warning(f"Session {response.session_id} buffer is full, dropping oldest message")
+                response_data = await self.websocket.recv()
+                response = WsResponse(**json.loads(response_data))            
+                try:
+                    self.sessions[response.session_id].put_nowait(response)
+                except asyncio.QueueFull:
+                    self.sessions[response.session_id].get_nowait()
+                    logger.warning(f"Session {response.session_id} buffer is full, dropping oldest message")
+            except websockets.ConnectionClosed as e:
+                logger.warning(f"WebSocket connection closed: {e}")
+                # Attempt to reconnect
+                reconnected = await self._reconnect()
+                if not reconnected:
+                    # Signal all pending sessions that connection is lost
+                    for session_id, queue in self.sessions.items():
+                        try:
+                            queue.put_nowait(None)  # Signal connection failure
+                        except asyncio.QueueFull:
+                            pass
+                    break
+            except Exception as e:
+                logger.error(f"Error in listen_for_responses: {e}")
+                # Try to reconnect on other errors
+                reconnected = await self._reconnect()
+                if not reconnected:
+                    break
         
     async def get_or_update_session(self, session_id: str):
         if session_id not in self.sessions:
@@ -691,31 +789,72 @@ class LivellmWsClient(BaseLivellmClient):
             self.__listen_for_responses_task.cancel()
             self.__listen_for_responses_task = None
         self.sessions.clear()
+        # Reset reconnect counter so future connections start fresh
+        self._reconnect_attempt = 0
     
     def _get_effective_timeout(self, timeout: Optional[float]) -> Optional[float]:
         """Get effective timeout: per-request timeout overrides default."""
         return timeout if timeout is not None else self.timeout
     
-    async def get_response(self, action: WsAction, payload: dict, timeout: Optional[float] = None) -> dict:
-        """Send a request and wait for response."""
+    async def _ensure_connected(self):
+        """Ensure WebSocket is connected, reconnecting if necessary."""
         if self.websocket is None:
             await self.connect()
+        return self.websocket is not None
+    
+    async def _send_request(self, session_id: str, action: WsAction, payload: dict) -> bool:
+        """
+        Send a request over WebSocket.
+        
+        Returns:
+            True if sent successfully, False if connection was lost.
+        """
+        try:
+            if self.websocket is None:
+                return False
+            request = WsRequest(session_id=session_id, action=action, payload=payload)
+            await self.websocket.send(json.dumps(request.model_dump()))
+            return True
+        except websockets.ConnectionClosed:
+            return False
+        except Exception as e:
+            logger.warning(f"Error sending request: {e}")
+            return False
+    
+    async def get_response(self, action: WsAction, payload: dict, timeout: Optional[float] = None) -> dict:
+        """Send a request and wait for response with automatic reconnection support."""
+        if not await self._ensure_connected():
+            raise Exception("Failed to establish WebSocket connection")
         
         session_id = uuid4().hex
-        request = WsRequest(session_id=session_id, action=action, payload=payload)
         q = await self.get_or_update_session(session_id)
-        await self.websocket.send(json.dumps(request.model_dump()))
+        
+        # Try to send the request
+        if not await self._send_request(session_id, action, payload):
+            # Connection lost, try to reconnect and retry once
+            reconnected = await self._reconnect()
+            if not reconnected:
+                self.sessions.pop(session_id, None)
+                raise Exception("WebSocket connection lost and reconnection failed")
+            if not await self._send_request(session_id, action, payload):
+                self.sessions.pop(session_id, None)
+                raise Exception("Failed to send request after reconnection")
         
         effective_timeout = self._get_effective_timeout(timeout)
         
         try:
             if effective_timeout:
-                response: WsResponse = await asyncio.wait_for(q.get(), timeout=effective_timeout)
+                response: Optional[WsResponse] = await asyncio.wait_for(q.get(), timeout=effective_timeout)
             else:
-                response: WsResponse = await q.get()
+                response: Optional[WsResponse] = await q.get()
         except asyncio.TimeoutError:
             self.sessions.pop(session_id, None)
             raise TimeoutError(f"Request timed out after {effective_timeout} seconds")
+        
+        # Check for connection failure signal
+        if response is None:
+            self.sessions.pop(session_id, None)
+            raise Exception("WebSocket connection lost")
         
         self.sessions.pop(session_id)
         if response.status == WsStatus.ERROR:
@@ -726,26 +865,40 @@ class LivellmWsClient(BaseLivellmClient):
             raise Exception(f"WebSocket failed with unknown status: {response}")
     
     async def get_response_stream(self, action: WsAction, payload: dict, timeout: Optional[float] = None) -> AsyncIterator[dict]:
-        """Send a request and stream responses."""
-        if self.websocket is None:
-            await self.connect()
+        """Send a request and stream responses with automatic reconnection support."""
+        if not await self._ensure_connected():
+            raise Exception("Failed to establish WebSocket connection")
         
         session_id = uuid4().hex
-        request = WsRequest(session_id=session_id, action=action, payload=payload)
         q = await self.get_or_update_session(session_id)
-        await self.websocket.send(json.dumps(request.model_dump()))
+        
+        # Try to send the request
+        if not await self._send_request(session_id, action, payload):
+            # Connection lost, try to reconnect and retry once
+            reconnected = await self._reconnect()
+            if not reconnected:
+                self.sessions.pop(session_id, None)
+                raise Exception("WebSocket connection lost and reconnection failed")
+            if not await self._send_request(session_id, action, payload):
+                self.sessions.pop(session_id, None)
+                raise Exception("Failed to send request after reconnection")
         
         effective_timeout = self._get_effective_timeout(timeout)
         
         while True:
             try:
                 if effective_timeout:
-                    response: WsResponse = await asyncio.wait_for(q.get(), timeout=effective_timeout)
+                    response: Optional[WsResponse] = await asyncio.wait_for(q.get(), timeout=effective_timeout)
                 else:
-                    response: WsResponse = await q.get()
+                    response: Optional[WsResponse] = await q.get()
             except asyncio.TimeoutError:
                 self.sessions.pop(session_id, None)
                 raise TimeoutError(f"Request timed out after {effective_timeout} seconds")
+            
+            # Check for connection failure signal
+            if response is None:
+                self.sessions.pop(session_id, None)
+                raise Exception("WebSocket connection lost during streaming")
             
             if response.status == WsStatus.STREAMING:
                 yield response.data
