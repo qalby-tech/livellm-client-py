@@ -757,17 +757,7 @@ class LivellmWsClient(BaseLivellmClient):
                     self.sessions[response.session_id].get_nowait()
                     logger.warning(f"Session {response.session_id} buffer is full, dropping oldest message")
             except websockets.ConnectionClosed as e:
-                logger.warning(f"WebSocket connection closed: {e}")
-                # Attempt to reconnect
-                reconnected = await self._reconnect()
-                if not reconnected:
-                    # Signal all pending sessions that connection is lost
-                    for session_id, queue in self.sessions.items():
-                        try:
-                            queue.put_nowait(None)  # Signal connection failure
-                        except asyncio.QueueFull:
-                            pass
-                    break
+                logger.info(f"WebSocket connection closed: {e}")
             except Exception as e:
                 logger.error(f"Error in listen_for_responses: {e}")
                 # Try to reconnect on other errors
