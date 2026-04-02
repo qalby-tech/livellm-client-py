@@ -757,7 +757,13 @@ class LivellmWsClient(BaseLivellmClient):
                     self.sessions[response.session_id].get_nowait()
                     logger.warning(f"Session {response.session_id} buffer is full, dropping oldest message")
             except websockets.ConnectionClosed as e:
-                logger.info(f"WebSocket connection closed: {e}")
+                # Connection closed, exit the listener loop
+                # Only log if it's not a normal closure (1000)
+                if e.code != 1000:
+                    logger.info(f"WebSocket connection closed: {e}")
+                else:
+                    logger.info(f"WebSocker connection closed with unknown error: {e}")
+                break
             except Exception as e:
                 logger.error(f"Error in listen_for_responses: {e}")
                 # Try to reconnect on other errors
