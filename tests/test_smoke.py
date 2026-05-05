@@ -109,7 +109,7 @@ class TestHealthCheck:
 
         assert isinstance(result, SuccessResponse)
         assert result.success is True
-        mock_httpx_client.get.assert_called_once_with("ping", headers=client.headers)
+        mock_httpx_client.get.assert_called_once_with("ping", headers=client.headers, timeout=None)
 
 
 class TestConfigurationManagement:
