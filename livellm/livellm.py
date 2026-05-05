@@ -622,7 +622,7 @@ class LivellmWsClient(BaseLivellmClient):
     """WebSocket-based LiveLLM client for real-time bidirectional communication."""
 
     def __init__(
-        self, 
+        self,
         base_url: str,
         user_agent: Optional[str] = None,
         timeout: Optional[float] = None,
@@ -630,7 +630,8 @@ class LivellmWsClient(BaseLivellmClient):
         max_buffer_size: Optional[int] = None,
         max_reconnect_attempts: int = 5,
         reconnect_base_delay: float = 1.0,
-        reconnect_max_delay: float = 30.0
+        reconnect_max_delay: float = 30.0,
+        project: Optional[str] = None,
     ):
         # Convert HTTP(S) URL to WS(S) URL
         base_url = base_url.rstrip("/")
@@ -646,6 +647,7 @@ class LivellmWsClient(BaseLivellmClient):
         self.base_url = f"{ws_url}/livellm/ws"
         self.timeout = timeout
         self.user_agent = user_agent or DEFAULT_USER_AGENT
+        self.project = project
         self.websocket = None
         self.sessions: Dict[str, asyncio.Queue] = {}
         self.max_buffer_size = max_buffer_size or 0 # None means unlimited buffer size
@@ -667,12 +669,15 @@ class LivellmWsClient(BaseLivellmClient):
         if self.websocket is not None:
             return self.websocket
         
+        headers = {"User-Agent": self.user_agent}
+        if self.project:
+            headers["X-Project"] = self.project
         self.websocket = await websockets.connect(
-            self.base_url, 
+            self.base_url,
             open_timeout=self.timeout,
             close_timeout=self.timeout,
             max_size=self.max_size,
-            additional_headers={"User-Agent": self.user_agent}
+            additional_headers=headers,
         )
         self.__listen_for_responses_task = asyncio.create_task(self.listen_for_responses())
                 
@@ -994,11 +999,12 @@ class LivellmClient(BaseLivellmClient):
     """HTTP-based LiveLLM client for request-response communication."""
 
     def __init__(
-        self, 
+        self,
         base_url: str,
         user_agent: Optional[str] = None,
         timeout: Optional[float] = None,
-        configs: Optional[List[Settings]] = None
+        configs: Optional[List[Settings]] = None,
+        project: Optional[str] = None,
         ):
         # Root server URL (http/https, without trailing slash)
         self._root_base_url = base_url.rstrip("/")
@@ -1006,6 +1012,7 @@ class LivellmClient(BaseLivellmClient):
         self.base_url = f"{self._root_base_url}/livellm"
         self.timeout = timeout
         self.user_agent = user_agent or DEFAULT_USER_AGENT
+        self.project = project
         # Create client without timeout - we'll pass timeout per-request
         self.client = httpx.AsyncClient(base_url=self.base_url)
         self.settings = []
@@ -1013,6 +1020,10 @@ class LivellmClient(BaseLivellmClient):
             "Content-Type": "application/json",
             "User-Agent": self.user_agent,
         }
+        if project:
+            # Tag every request with the caller's project so the proxy can
+            # attribute traces / logs to the right service in Tempo.
+            self.headers["X-Project"] = project
         # Lazily-created realtime (WebSocket) client
         self._realtime = None
         if configs:
@@ -1035,7 +1046,12 @@ class LivellmClient(BaseLivellmClient):
         """
         if self._realtime is None:
             # Pass the same root base URL; LivellmWsClient will handle ws/wss conversion.
-            self._realtime = LivellmWsClient(self._root_base_url, user_agent=self.user_agent, timeout=self.timeout)
+            self._realtime = LivellmWsClient(
+                self._root_base_url,
+                user_agent=self.user_agent,
+                timeout=self.timeout,
+                project=self.project,
+            )
         return self._realtime
     
     def update_configs_post_init(self, configs: List[Settings]) -> SuccessResponse:
